@@ -1,0 +1,13 @@
+version: "3.8"
+
+services:
+  app:
+    container_name: app-dev2
+    image: app-dev
+    build:
+      context: .
+      target: development
+    volumes:
+      - .:/app
+    ports:
+      - 4001:4000

@@ -1,0 +1,19 @@
+# palindrome service: 
+we have various files here:
+
+1. main is the main file handling http server start and router instance start
+then in main we instantiate a service object and a makeEndpoint function call which returns an endpoint struct
+the endpoint struct has the wrapper for both palindrome and reverse endpoints.
+
+2. endpoints is responsible for service request and response endpoints. it uses 2 wrapper functions that use request and response structs created in response and request files.
+inside wrapper functions it calls the service related method and business logic is implemented. then the related result is parsed using response struct.
+
+3. service is a file representing business logic and here we create a general service interface and then we link our mystrService struct to this interface 
+by implementing related methods.
+we also define new_service function that instantiates the service.
+in service interface we have 2 functions that each handle a specific business logic.
+
+4. transport file links endpoints and request and response data.
+here we have some functions: responsible for decoding request and encoding response based on described struct in response and request files.
+then we have two main functions each for a single main function on business logic defined in service file.
+so each one of these main funcs, take the responsible endpoint and service and the encoding response function and decoding request function.

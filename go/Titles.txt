@@ -1,0 +1,34 @@
+context.go : create http handler using request context (handles time out and cancellation)
+marshall.go : marshall and unmarshall using a struct 
+mutex.go : create a struct and create add method and use mutex to prevent goroutine madness while adding 
+channels.go : simple channel explanation
+gin.go : simplest form of gin router using a /ping endpoint and return simple "pong"
+gin1.go: practical gin sample creating a simple api and using 3(getAll,getOne,Post) endpoints simulating a real life scenario (using static struct as DB)
+ginWithLogging.go: all the jazz in gin1.go but using a simple txt file as logger for all incoming POST json objects.
+mysql.go : create a simple connection to local mysql DB and perform simple SELECT query
+graphQl.go : simplest form of creating a hello world graphQl using go
+graphQlCrud.go : simple CRUD api using graphQl
+fileReader.go : open a file named test.txt and read line by line
+imageDownloader.go : get an image via a url as byte and copy it to a file using io package
+FIFO.go : creates a channel that constantly recv and sends data. the send takes less than recv and channel is buffered.
+constantUserInput.go : it creates a channel and keeps prompting for user input and sends data to channel and reads from it until Ctrl+c
+getRequest.go : simple get request that fetch data as byte and parses into string and prints it
+getRequestWithHeader.go : it creates a get request and adds auth Header 
+ChanWithSelect.go : creates a channel and send and recv from it using select/case statetment.
+pingSimulator.go : I dunno why I wrote this funny script but it just prints output constantly :)
+goLogger.go : it sends data to a channel every second and logs using default Go logger 
+factorial.go : simple recursive function that can calculate factorial for big numbers using Go BIG module (math package sub-module)
+polymorphism.go : a simple explanation of polymorphism in go and usage of interfaces
+select.go : simple example of select statetment
+hashingDJB2.go : simple implementation of djb2 hashing alg that takes a string (like UUID) and return int64 number. also UUID is generated as a func.
+
+directories:
+tutorials: basic Go tutorials
+go_crash_course : another full tutorial (Brad traversy)
+test : network stress tester 
+FileUploadMultipart : it creates a listener and has index.html that you can send files using the handler providedi (important)
+go_restapi : crud app using  << mux router >> / very simple and easy to understand
+go fiber introduction : 
+crud : 
+
+
