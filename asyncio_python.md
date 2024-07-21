@@ -304,3 +304,52 @@ async def main():
 asyncio.run(main())
 ```
 Here, sync_task("sync") runs in a separate thread, allowing async_task("1") and async_task("2") to execute concurrently and complete without delay.
+
+
+### deeper guide on locks:
+
+Scenario:
+
+Imagine you have multiple coroutines that need to increment a shared counter. You want to ensure that only one coroutine can increment the counter at a time to avoid race conditions.
+Example Code
+
+```python
+
+import asyncio
+
+# Shared counter
+counter = 0
+
+# Create an asyncio lock
+lock = asyncio.Lock()
+
+# Asynchronous function that increments the counter
+async def increment_counter(name):
+    global counter
+    print(f"{name} is trying to acquire the lock")
+    
+    async with lock:
+        print(f"{name} has acquired the lock")
+        # Simulate a delay while holding the lock
+        await asyncio.sleep(1)
+        # Increment the counter
+        counter += 1
+        print(f"{name} incremented the counter to {counter}")
+    
+    print(f"{name} has released the lock")
+
+# Main function to run coroutines
+async def main():
+    # Create multiple tasks that will increment the counter
+    tasks = [
+        asyncio.create_task(increment_counter("Task 1")),
+        asyncio.create_task(increment_counter("Task 2")),
+        asyncio.create_task(increment_counter("Task 3"))
+    ]
+
+    # Wait for all tasks to complete
+    await asyncio.gather(*tasks)
+
+# Run the main function
+asyncio.run(main())
+```
