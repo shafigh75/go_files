@@ -230,3 +230,77 @@ asyncio.run(main())
 - **Synchronization**: Use locks, events, and semaphores to manage concurrency.
 
 Understanding `asyncio` will allow you to write efficient, non-blocking code for I/O-bound tasks and network operations. Experiment with these concepts to get a deeper grasp of asynchronous programming in Python.
+
+
+### a deeper example for executor:
+
+Comparison between using and not using executor:
+
+Without Executors:
+
+```python
+
+import asyncio
+import time
+
+def sync_task(name):
+    print(f"Sync task {name} started")
+    time.sleep(3)
+    print(f"Sync task {name} finished")
+
+async def async_task(name):
+    print(f"Async task {name} started")
+    await asyncio.sleep(2)
+    print(f"Async task {name} finished")
+
+async def main():
+    # Start async tasks
+    task1 = asyncio.create_task(async_task("1"))
+    task2 = asyncio.create_task(async_task("2"))
+
+    # Run sync task directly
+    sync_task("sync")
+
+    # Await async tasks
+    await task1
+    await task2
+
+asyncio.run(main())
+```
+In this case, sync_task("sync") will block the event loop, causing async_task("1") and async_task("2") to be delayed.
+
+Using Executors:
+
+```python
+
+import asyncio
+import time
+from concurrent.futures import ThreadPoolExecutor
+
+def sync_task(name):
+    print(f"Sync task {name} started")
+    time.sleep(3)
+    print(f"Sync task {name} finished")
+
+async def async_task(name):
+    print(f"Async task {name} started")
+    await asyncio.sleep(2)
+    print(f"Async task {name} finished")
+
+async def run_sync_task(name):
+    loop = asyncio.get_event_loop()
+    with ThreadPoolExecutor() as executor:
+        await loop.run_in_executor(executor, sync_task, name)
+
+async def main():
+    task1 = asyncio.create_task(async_task("1"))
+    task2 = asyncio.create_task(async_task("2"))
+
+    await run_sync_task("sync")
+
+    await task1
+    await task2
+
+asyncio.run(main())
+```
+Here, sync_task("sync") runs in a separate thread, allowing async_task("1") and async_task("2") to execute concurrently and complete without delay.
