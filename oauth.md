@@ -28,10 +28,9 @@ This document outlines the OAuth 2.0 process flow for TechCorp, which allows use
 - `client_id`: The unique identifier for the client application.
 - `redirect_uri`: The URI to which the authorization server will redirect the user after authorization.
 - `scope`: A space-separated list of scopes that the client is requesting.
-```
 
 **Example Request**:
-
+```
 GET https://auth.techcorp.com/authorize?response_type=code&client_id=web_app&redirect_uri=https://web.techcorp.com/callback&scope=read
 ```
 ### 2. Token Endpoint
@@ -46,9 +45,9 @@ GET https://auth.techcorp.com/authorize?response_type=code&client_id=web_app&red
 - `redirect_uri`: The same redirect URI used in the authorization request.
 - `client_id`: The unique identifier for the client application.
 - `client_secret`: The client secret associated with the client application.
-```
-**Example Request**:
 
+**Example Request**:
+```
 POST https://auth.techcorp.com/token
 Content-Type: application/x-www-form-urlencoded
 
