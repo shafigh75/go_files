@@ -9,4 +9,5 @@ these are sample go files and some more tools that i worked with
 - add high availability and clustering capabilities
 - add cli
 - add bash script to setup the tooling
+- separate server and cli and use service to manage server
 
