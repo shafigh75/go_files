@@ -80,5 +80,11 @@ if prompt := st.chat_input("Type your message here..."):
 
     # Display assistant response
     with st.chat_message("assistant"):
-        st.markdown(response)
+        response_text = ""
+        response_placeholder = st.empty()
+        for char in response:
+            response_text += char
+            response_placeholder.markdown(f"**Response:** {response_text}")
+            time.sleep(0.01)  # Adjust the typing speed here
+        #st.markdown(response)
 
