@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Chat Login</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f2f2f2;
+      display: flex;
+      height: 100vh;
+      align-items: center;
+      justify-content: center;
+    }
+    #loginBox {
+      background: #fff;
+      padding: 20px 30px;
+      border: 1px solid #ddd;
+      border-radius: 5px;
+      box-shadow: 0px 2px 10px rgba(0,0,0,0.1);
+    }
+    input[type="text"] {
+      width: 100%;
+      padding: 10px;
+      margin: 10px 0;
+      border: 1px solid #ccc;
+      border-radius: 3px;
+      font-size: 16px;
+    }
+    button {
+      width: 100%;
+      padding: 10px;
+      background: #28a745;
+      color: #fff;
+      border: none;
+      border-radius: 3px;
+      font-size: 16px;
+      cursor: pointer;
+    }
+    button:hover {
+      background: #218838;
+    }
+  </style>
+</head>
+<body>
+  <div id="loginBox">
+    <h2>Welcome to Go Chat</h2>
+    <form id="loginForm">
+      <input type="text" id="username" placeholder="Enter your name" required />
+      <input type="text" id="room" placeholder="Enter room name" required />
+      <button type="submit">Join Chat</button>
+    </form>
+  </div>
+  <script>
+    document.getElementById("loginForm").addEventListener("submit", function(e) {
+      e.preventDefault();
+      const username = document.getElementById("username").value.trim();
+      const room = document.getElementById("room").value.trim();
+      if(username && room){
+        window.location.href = "/chat?username=" + encodeURIComponent(username) + "&room=" + encodeURIComponent(room);
+      }
+    });
+  </script>
+</body>
+</html>
