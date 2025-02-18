@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Go Chat Room</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      padding: 0;
+      background: #f2f2f2;
+    }
+    #users {
+      width: 80%;
+      margin: 20px auto;
+      padding: 10px;
+      background: #fff;
+      border: 1px solid #ddd;
+    }
+    #chat {
+      width: 80%;
+      margin: 20px auto;
+      background: #fff;
+      border: 1px solid #ddd;
+      padding: 10px;
+      height: 400px;
+      overflow-y: scroll;
+    }
+    #messageForm {
+      width: 80%;
+      margin: 20px auto;
+      display: flex;
+    }
+    #messageInput {
+      flex: 1;
+      padding: 10px;
+      font-size: 16px;
+      border: 1px solid #ccc;
+      border-radius: 3px;
+    }
+    #sendButton {
+      padding: 10px 20px;
+      font-size: 16px;
+      background: #007bff;
+      color: #fff;
+      border: none;
+      border-radius: 3px;
+      cursor: pointer;
+      margin-left: 10px;
+    }
+    #sendButton:hover {
+      background: #0069d9;
+    }
+    .message {
+      margin: 5px 0;
+      padding: 5px;
+      border-bottom: 1px solid #eee;
+    }
+    .system {
+      color: #888;
+      font-style: italic;
+    }
+  </style>
+</head>
+<body>
+  <div id="users">
+    Active Users: <span id="userList"></span>
+  </div>
+  <div id="chat"></div>
+  <form id="messageForm">
+    <input id="messageInput" type="text" placeholder="Type your message..." autocomplete="off" required />
+    <button id="sendButton" type="submit">Send</button>
+  </form>
+  <script>
+    // Helper to get parameters from URL.
+    function getParam(param) {
+      const params = new URLSearchParams(window.location.search);
+      return params.get(param);
+    }
+    const username = getParam("username") || "Anonymous";
+    const room = getParam("room") || "Lobby";
+
+    // Build WS URL.
+    const protocol = location.protocol === "https:" ? "wss://" : "ws://";
+    const wsUrl = protocol + window.location.host + "/ws?username=" + encodeURIComponent(username) + "&room=" + encodeURIComponent(room);
+    const socket = new WebSocket(wsUrl);
+
+    socket.onopen = function() {
+      console.log("Connected as", username, "in room", room);
+    };
+
+    socket.onmessage = function(event) {
+      // Messages from the server may be new-line separated.
+      event.data.split("\n").forEach(function(line) {
+        if (!line.trim()) return;
+        let msg;
+        try {
+          msg = JSON.parse(line);
+        } catch (error) {
+          console.error("Error parsing message:", error);
+          return;
+        }
+        if (msg.type === "message") {
+          addMessage("<strong>" + msg.username + ":</strong> " + msg.message);
+        } else if (msg.type === "join" || msg.type === "leave") {
+          addMessage("<span class='system'>" + msg.message + "</span>");
+        } else if (msg.type === "users") {
+          document.getElementById("userList").innerText = msg.users.join(", ");
+        }
+      });
+    };
+
+    socket.onclose = function() {
+      addMessage("<span class='system'>Disconnected from server</span>");
+    };
+
+    socket.onerror = function(err) {
+      console.error("WS error:", err);
+    };
+
+    document.getElementById("messageForm").addEventListener("submit", function(e) {
+      e.preventDefault();
+      const input = document.getElementById("messageInput");
+      if (input.value) {
+        socket.send(input.value);
+        input.value = "";
+      }
+    });
+
+    function addMessage(html) {
+      const chatDiv = document.getElementById("chat");
+      const msgDiv = document.createElement("div");
+      msgDiv.className = "message";
+      msgDiv.innerHTML = html;
+      chatDiv.appendChild(msgDiv);
+      chatDiv.scrollTop = chatDiv.scrollHeight;
+    }
+  </script>
+</body>
+</html>
