@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Go Chat App - Login</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="login-container">
+        <div class="login-card">
+            <h1 class="login-title">Go Chat App</h1>
+            <form id="loginForm" class="login-form">
+                <input id="usernameInput" type="text" placeholder="Username" required>
+                <input id="roomInput" type="text" placeholder="Room" required>
+                <button id="loginButton" type="submit">Join Room</button>
+            </form>
+        </div>
+    </div>
+    <script>
+        document.getElementById("loginForm").addEventListener("submit", function(e) {
+            e.preventDefault();
+            var usernameInput = document.getElementById("usernameInput").value;
+            var roomInput = document.getElementById("roomInput").value;
+            if (usernameInput && roomInput) {
+                var queryString = `?username=${encodeURIComponent(usernameInput)}&room=${encodeURIComponent(roomInput)}`;
+                window.location.href = `/chat${queryString}`;
+            }
+        });
+    </script>
+</body>
+</html>
