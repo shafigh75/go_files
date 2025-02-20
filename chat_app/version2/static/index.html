@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Go Chat App</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Go Chat App</h1>
+            <button id="usersButton" class="users-button">Active Users</button>
+        </div>
+        <div id="usersModal" class="modal">
+            <div class="modal-content">
+                <span class="close-button">&times;</span>
+                <h2>Active Users</h2>
+                <div id="userList" class="user-list-content"></div>
+            </div>
+        </div>
+        <div id="chat" class="chat-window"></div>
+        <form id="messageForm" class="message-form">
+            <input id="messageInput" type="text" autocomplete="off" placeholder="Type your message here..." required>
+            <button id="sendButton" type="submit">Send</button>
+        </form>
+    </div>
+    <script>
+        // Get username and room from URL query parameters.
+        function getQueryParam(param) {
+            const params = new URLSearchParams(window.location.search);
+            return params.get(param);
+        }
+
+        const username = getQueryParam("username") || "Anonymous";
+        const room = getQueryParam("room") || "Lobby";
+
+        // Build the WebSocket URL
+        var wsProtocol = (location.protocol === "https:") ? "wss://" : "ws://";
+        var socketUrl = wsProtocol + window.location.host + "/ws?username=" + encodeURIComponent(username) + "&room=" + encodeURIComponent(room);
+        var socket = new WebSocket(socketUrl);
+
+        socket.onmessage = function(event) {
+            // event.data may contain multiple newline-delimited JSON messages.
+            event.data.split("\n").forEach(function(line) {
+                if (!line.trim()) return;
+                var data;
+                try {
+                    data = JSON.parse(line);
+                } catch (e) {
+                    console.error("Error parsing message:", e);
+                    return;
+                }
+                // Handle different message types.
+                if (data.type === "message") {
+                    addMessage("<strong>" + data.username + ":</strong> " + data.message);
+                } else if (data.type === "join" || data.type === "leave") {
+                    addMessage("<span class='system'>" + data.message + "</span>");
+                } else if (data.type === "users") {
+                    updateUserList(data.users);
+                }
+            });
+        };
+
+        document.getElementById("messageForm").addEventListener("submit", function(e) {
+            e.preventDefault();
+            var input = document.getElementById("messageInput");
+            if (input.value) {
+                socket.send(input.value);
+                input.value = "";
+            }
+        });
+
+        socket.onopen = function() {
+            console.log("Connected to server as " + username + " in room " + room);
+        };
+
+        socket.onclose = function() {
+            console.log("Disconnected from server");
+            addMessage("<span class='system'>Disconnected from server</span>");
+        };
+
+        socket.onerror = function(error) {
+            console.error("WebSocket error: ", error);
+        };
+
+        function addMessage(html) {
+            var chat = document.getElementById("chat");
+            var messageElem = document.createElement("div");
+            messageElem.className = "message";
+            messageElem.innerHTML = html;
+            chat.appendChild(messageElem);
+            chat.scrollTop = chat.scrollHeight;
+        }
+
+        function updateUserList(users) {
+            var userList = document.getElementById("userList");
+            userList.innerHTML = "";
+            users.forEach(function(user) {
+                var userElem = document.createElement("div");
+                userElem.className = "user";
+                userElem.innerText = user;
+                userList.appendChild(userElem);
+            });
+        }
+
+        // Modal functionality
+        var modal = document.getElementById("usersModal");
+        var usersButton = document.getElementById("usersButton");
+        var closeButton = document.getElementsByClassName("close-button")[0];
+
+        usersButton.onclick = function() {
+            modal.style.display = "block";
+        }
+
+        closeButton.onclick = function() {
+            modal.style.display = "none";
+        }
+
+        window.onclick = function(event) {
+            if (event.target == modal) {
+                modal.style.display = "none";
+            }
+        }
+    </script>
+</body>
+</html>
