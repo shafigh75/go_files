@@ -1,4 +1,4 @@
-```
+'''
 What Is Event Sourcing?
 
 Event sourcing is a design pattern that stores the state of an application as a sequence of events rather than simply storing the current state. Each event represents a state change and is immutable once recorded. 
@@ -10,7 +10,7 @@ Key Benefits:
     Reproducibility: You can rebuild the state at any point in time.
     Flexibility: You can derive multiple models (read models, caches etc.) from the event stream.
 
-```
+'''
 
 import datetime
 from typing import List, Any
