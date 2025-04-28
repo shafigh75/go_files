@@ -1,0 +1,70 @@
+#!/bin/bash
+
+# === Check Dependencies ===
+if ! command -v zenity &>/dev/null; then
+  echo "Error: 'zenity' is not installed."
+  exit 1
+fi
+
+# === Ask for information using Zenity ===
+
+IP_ADDRESS=$(zenity --entry --title="SSH Config" --text="Enter the IP address (e.g., 192.168.1.1):")
+[ $? -ne 0 ] && exit 1  # User cancelled
+if [[ -z "$IP_ADDRESS" ]]; then
+  zenity --error --text="IP Address cannot be empty."
+  exit 1
+fi
+
+HOSTNAME=$(zenity --entry --title="SSH Config" --text="Enter the Hostname (e.g., myserver):")
+[ $? -ne 0 ] && exit 1
+if [[ -z "$HOSTNAME" ]]; then
+  zenity --error --text="Hostname cannot be empty."
+  exit 1
+fi
+
+USERNAME=$(zenity --entry --title="SSH Config" --text="Enter the Username (e.g., user):")
+[ $? -ne 0 ] && exit 1
+if [[ -z "$USERNAME" ]]; then
+  zenity --error --text="Username cannot be empty."
+  exit 1
+fi
+
+PORT=$(zenity --entry --title="SSH Config" --text="Enter the Port (default 22, leave empty to skip):")
+[ $? -ne 0 ] && exit 1
+if [[ -z "$PORT" ]]; then
+  PORT=22
+fi
+
+# === SSH config file ===
+SSH_CONFIG_FILE="$HOME/.ssh/config"
+
+# Create SSH config file if missing
+if [ ! -f "$SSH_CONFIG_FILE" ]; then
+  mkdir -p "$HOME/.ssh"
+  touch "$SSH_CONFIG_FILE"
+  chmod 600 "$SSH_CONFIG_FILE"
+fi
+
+# Check if host already exists
+if grep -q "Host $HOSTNAME" "$SSH_CONFIG_FILE"; then
+  zenity --error --title="Error" --text="Host '$HOSTNAME' already exists in SSH config."
+  exit 1
+fi
+
+# Append new SSH configuration
+{
+  echo "Host $HOSTNAME"
+  echo "    HostName $IP_ADDRESS"
+  echo "    User $USERNAME"
+  echo "    Port $PORT"
+  echo ""
+} >> "$SSH_CONFIG_FILE"
+
+# Ensure permissions
+chmod 600 "$SSH_CONFIG_FILE"
+
+# === Show success notification ===
+zenity --info --title="Success" --text="Added '$HOSTNAME' to your SSH config successfully!"
+
+exit 0
+
