@@ -1,0 +1,101 @@
+#!/bin/bash
+
+# Password Manager Script using `pass` + `rofi`
+
+# Check dependencies
+if ! command -v pass &>/dev/null; then
+  echo "Error: 'pass' is not installed."
+  exit 1
+fi
+
+if ! command -v rofi &>/dev/null; then
+  echo "Error: 'rofi' is not installed."
+  exit 1
+fi
+
+# Function: cleanly list all entries from pass
+list_entries() {
+  PASSWORD_STORE_DIR="${PASSWORD_STORE_DIR:-$HOME/.password-store}"
+  find "$PASSWORD_STORE_DIR" -type f -name '*.gpg' \
+    | sed "s|$PASSWORD_STORE_DIR/||" \
+    | sed 's/\.gpg$//'
+}
+
+# Main Menu
+ACTION=$(echo -e "fetch\nsave" | rofi -dmenu -p "Select Action:")
+
+if [[ -z "$ACTION" ]]; then
+  echo "No action selected."
+  exit 1
+fi
+
+case "$ACTION" in
+  save)
+    ENTRY=$(rofi -dmenu -p "Enter new entry name:")
+
+    if [[ -z "$ENTRY" ]]; then
+      echo "No entry name provided."
+      exit 1
+    fi
+
+    # Check if entry already exists
+    if pass show "$ENTRY" &>/dev/null; then
+      echo "Error: An entry with the name '$ENTRY' already exists."
+      exit 1
+    fi
+
+    PASSWORD=$(rofi -dmenu -p "Enter password:" -password)
+    CONFIRM_PASSWORD=$(rofi -dmenu -p "Confirm password:" -password)
+
+    if [[ "$PASSWORD" != "$CONFIRM_PASSWORD" ]]; then
+      echo "Error: Passwords do not match."
+      exit 1
+    fi
+
+    echo "$PASSWORD" | pass insert "$ENTRY" -e
+    notify-send "Password Manager" "Password saved for '$ENTRY'"
+    ;;
+
+  fetch)
+    ENTRIES=$(list_entries)
+
+    if [[ -z "$ENTRIES" ]]; then
+      echo "No entries found in password store."
+      exit 1
+    fi
+
+    SELECTED=$(echo "$ENTRIES" | rofi -dmenu -p "Select entry to fetch:")
+
+    if [[ -z "$SELECTED" ]]; then
+      echo "No entry selected."
+      exit 1
+    fi
+
+    PASSWORD=$(pass show "$SELECTED")
+
+    if [[ $? -ne 0 ]]; then
+      echo "Failed to fetch password for '$SELECTED'."
+      exit 1
+    fi
+
+    # Copy password to clipboard
+    if command -v xclip &>/dev/null; then
+      echo -n "$PASSWORD" | xclip -selection clipboard
+      notify-send "Password Manager" "Password copied to clipboard for '$SELECTED'"
+    elif command -v wl-copy &>/dev/null; then
+      echo -n "$PASSWORD" | wl-copy
+      notify-send "Password Manager" "Password copied to clipboard for '$SELECTED'"
+    elif command -v pbcopy &>/dev/null; then
+      echo -n "$PASSWORD" | pbcopy
+      osascript -e "display notification \"Password copied to clipboard for $SELECTED\" with title \"Password Manager\""
+    else
+      echo "$PASSWORD"
+    fi
+    ;;
+
+  *)
+    echo "Invalid action."
+    exit 1
+    ;;
+esac
+
