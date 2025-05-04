@@ -258,6 +258,8 @@ globalkeys = gears.table.join(
               {description = "view next", group = "tag"}),
     awful.key({ modkey,           }, "Escape", awful.tag.history.restore,
               {description = "go back", group = "tag"}),
+    awful.key({ }, "Print", function ()  awful.spawn.with_shell("scrot --select /home/mohammad/Pictures/screenshots/$(date +%Y-%m-%dT%H:%M:%S%Z).png") end,
+              {description = "take a screenshot", group = "awesome"}),
 
     awful.key({ modkey,           }, "Right",
         function ()
