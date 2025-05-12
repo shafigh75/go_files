@@ -1,6 +1,5 @@
 --------------------
 
-User prompt 2 of 10 - 5/12/2025, 6:19:55 AM:
  ok thanks now lets assume you are a senior devops engineer who is going to be my mentor on kubernetes. lets start by this syllabus and start explaining every section in a professional manner so that at the end I can be a pro devops like you in using k8s
 
 syllabus : 
