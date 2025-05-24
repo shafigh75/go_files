@@ -172,7 +172,7 @@ Save the file and exit your editor.
 #### 3. Restart dnsmasq
 
 For the changes to take effect, restart the dnsmasq service:
-
+└─bareos--vg-bareos--lv 252:0    0  100G  0 lvm  /mnt/bareos
 On systemd-based systems:
 
 ```bash
@@ -291,3 +291,157 @@ After adding these routes, any packet from the local network destined for the re
 - This setup is useful for securely connecting branch offices, linking disparate networks, or even encapsulating non-IP protocols over an IP backbone.
 
 Using the GRE tunnel is essentially about leveraging it in your overall network design by updating routing decisions to treat it as your link of choice for specific traffic.
+
+
+---
+
+# LVM:
+question: i have ubuntu server with a raw disk called sdb with 100GB space i want to setup a partition and use LVM and name it bareos and mount it on /mnt/bareos 
+step by step guide to set it up so that later i can easily extend it?
+
+Here's a **step-by-step guide** to set up a raw disk (`/dev/sdb`) with **LVM** on an Ubuntu server. You'll create a partition, configure LVM, and mount it to `/mnt/bareos`, in a way that makes it **easy to extend later**.
+
+---
+
+### 🧰 Prerequisites
+
+* You are **root** or have `sudo` privileges.
+* Disk `/dev/sdb` is **unused** (no partitions or important data).
+
+---
+
+## ✅ Step 1: Create a Partition on /dev/sdb
+
+```bash
+sudo fdisk /dev/sdb
+```
+
+**In `fdisk`:**
+
+* Press `n` to create a new partition.
+* Select `p` for primary.
+* Accept defaults for partition number, first sector, and last sector (use full disk).
+* Press `t`, then type `8e` (LVM partition type).
+* Press `w` to write and exit.
+
+Now you have `/dev/sdb1` as an LVM partition.
+
+---
+
+## ✅ Step 2: Set Up LVM
+
+### 2.1 Install LVM if not installed
+
+```bash
+sudo apt update
+sudo apt install -y lvm2
+```
+
+### 2.2 Create Physical Volume
+
+```bash
+sudo pvcreate /dev/sdb1
+```
+
+### 2.3 Create Volume Group
+
+```bash
+sudo vgcreate bareos-vg /dev/sdb1
+```
+
+### 2.4 Create Logical Volume (use all space or partial)
+
+Let’s say you want to use all space now:
+
+```bash
+sudo lvcreate -l 100%FREE -n bareos-lv bareos-vg
+```
+
+Or, for example, use 50GB for now:
+
+```bash
+sudo lvcreate -L 50G -n bareos-lv bareos-vg
+```
+
+---
+
+## ✅ Step 3: Format and Mount the Logical Volume
+
+### 3.1 Format with ext4 (or your preferred FS)
+
+```bash
+sudo mkfs.ext4 /dev/bareos-vg/bareos-lv
+```
+
+### 3.2 Create mount point
+
+```bash
+sudo mkdir -p /mnt/bareos
+```
+
+### 3.3 Mount it
+
+```bash
+sudo mount /dev/bareos-vg/bareos-lv /mnt/bareos
+```
+
+### 3.4 Add to `/etc/fstab` for persistence
+
+```bash
+echo '/dev/bareos-vg/bareos-lv /mnt/bareos ext4 defaults 0 2' | sudo tee -a /etc/fstab
+```
+
+---
+
+## ✅ Step 4: Verify
+
+```bash
+df -h /mnt/bareos
+sudo vgs
+sudo lvs
+```
+
+---
+
+## 📦 Step 5: Extend Later (When Needed)
+
+When `/mnt/bareos` is full and you want to extend:
+
+### 5.1 Add new disk or free space to the VG:
+
+Example with a new disk `/dev/sdc`:
+
+```bash
+sudo fdisk /dev/sdc
+# repeat fdisk steps → create partition → type 8e
+sudo pvcreate /dev/sdc1
+sudo vgextend bareos-vg /dev/sdc1
+```
+
+### 5.2 Extend the Logical Volume
+
+Example: extend by 20GB
+
+```bash
+sudo lvextend -L +20G /dev/bareos-vg/bareos-lv
+```
+
+Or use all available space:
+
+```bash
+sudo lvextend -l +100%FREE /dev/bareos-vg/bareos-lv
+```
+
+### 5.3 Resize the Filesystem
+
+```bash
+sudo resize2fs /dev/bareos-vg/bareos-lv
+```
+
+---
+
+## ✅ Done!
+
+You're now using `/mnt/bareos` backed by LVM, ready for easy expansion as needed.
+
+
