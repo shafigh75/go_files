@@ -5814,3 +5814,50 @@ Would you like me to start interactive sessions now, like:
 * Real-world app deployment (e.g., MySQL + App + Ingress + PVC)?
 
 Let me know and I’ll tailor the next lesson for you.
+
+
+---
+### depper in RollBack:
+To roll back to a specific version of a Kubernetes Deployment that is not the most recent one, you can use the `kubectl rollout undo` command with the `--to-revision` flag. This allows you to specify the exact revision number you want to roll back to.
+
+### Steps to Rollback to a Specific Version
+
+1. **Check the Revision History**: First, you need to check the revision history of your Deployment to find the revision number you want to roll back to. You can do this with the following command:
+   ```bash
+   kubectl rollout history deployment/<deployment-name>
+   ```
+   Replace `<deployment-name>` with the name of your Deployment (e.g., `backend`).
+
+   This command will display a list of revisions along with their change-cause annotations, if any.
+
+2. **Identify the Revision Number**: From the output of the previous command, identify the revision number you want to roll back to. For example, if you see something like this:
+   ```
+   REVISION  CHANGE-CAUSE
+   1         <none>
+   2         <none>
+   3         <none>
+   ```
+   And you want to roll back to revision 1.
+
+3. **Rollback to the Specific Revision**: Use the `kubectl rollout undo` command with the `--to-revision` flag to roll back to the desired revision:
+   ```bash
+   kubectl rollout undo deployment/<deployment-name> --to-revision=<revision-number>
+   ```
+   For example, to roll back to revision 1 of the `backend` deployment:
+   ```bash
+   kubectl rollout undo deployment/backend --to-revision=1
+   ```
+
+4. **Verify the Rollback**: After executing the rollback command, you can verify that the Deployment has been successfully rolled back to the specified revision:
+   ```bash
+   kubectl rollout status deployment/backend
+   ```
+
+5. **Check the Current Revision**: You can also check the current revision of the Deployment to confirm that it has been updated:
+   ```bash
+   kubectl get deployment backend -o=jsonpath='{.status.revision}'
+   ```
+
+### Summary
+
+By following these steps, you can easily roll back to a specific version of a Deployment in Kubernetes. This is useful for reverting to a known stable state when issues arise with newer deployments. Always ensure to monitor the application after the rollback to confirm that it is functioning as expected.
