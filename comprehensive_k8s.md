@@ -5858,6 +5858,769 @@ To roll back to a specific version of a Kubernetes Deployment that is not the mo
    kubectl get deployment backend -o=jsonpath='{.status.revision}'
    ```
 
+
+
+## NETWORKS, CNI AND CILLIUM:
+
+This conversation was generated with Duck.ai (https://duck.ai) using OpenAI's GPT-4o mini Model. AI chats may display inaccurate or offensive information (see https://duckduckgo.com/duckai/privacy-terms for more info).
+
+====================
+
+User prompt 1 of 8 - 5/24/2025, 7:10:27 AM:
+what is overlay network? 
+
+GPT-4o mini:
+An overlay network is a virtual network that is built on top of an existing physical network. It consists of nodes and connections that are created by software rather than by the underlying hardware. Overlay networks can be used to create a variety of network topologies and can facilitate communication between devices that may not be directly connected in the physical network.
+
+Key characteristics of overlay networks include:
+
+1. **Virtualization**: They abstract the underlying physical network, allowing for the creation of multiple virtual networks that can operate independently.
+
+2. **Flexibility**: Overlay networks can be easily modified or reconfigured without needing to change the physical infrastructure.
+
+3. **Enhanced Features**: They can provide additional functionalities such as improved security, traffic management, and fault tolerance.
+
+4. **Examples**: Common examples of overlay networks include Virtual Private Networks (VPNs), peer-to-peer networks, and content delivery networks (CDNs).
+
+Overlay networks are particularly useful in scenarios where there is a need for secure communication, efficient data routing, or the ability to connect disparate systems across different physical locations.
+
+--------------------
+
+User prompt 2 of 8 - 5/24/2025, 7:11:17 AM:
+ok what is kubernetes overlay network like Flannel and calico? what is each one of them and what they do? what about Cillium? 
+
+GPT-4o mini:
+Kubernetes overlay networks are networking solutions that enable communication between pods (the smallest deployable units in Kubernetes) across different nodes in a Kubernetes cluster. They abstract the underlying network infrastructure and provide a way for pods to communicate with each other seamlessly, regardless of where they are deployed. Here’s a brief overview of Flannel, Calico, and Cilium:
+
+### 1. Flannel
+- **Overview**: Flannel is a simple and easy-to-use overlay network solution designed specifically for Kubernetes. It creates a virtual network that allows pods to communicate with each other across different nodes.
+- **How It Works**: Flannel assigns a unique subnet to each host in the cluster and uses a layer 3 network (like VXLAN or host-gw) to encapsulate packets sent between pods. This allows for seamless communication without requiring complex routing configurations.
+- **Use Cases**: Flannel is often used in simpler Kubernetes deployments where ease of setup and management is a priority.
+
+### 2. Calico
+- **Overview**: Calico is a more advanced networking solution that provides both overlay and non-overlay networking options. It focuses on scalability, performance, and security.
+- **How It Works**: Calico uses a pure Layer 3 approach, allowing pods to communicate directly over the underlying network without encapsulation. It can also operate in an overlay mode using IP-in-IP or VXLAN for environments that require it. Calico integrates with Kubernetes Network Policies to enforce security rules.
+- **Use Cases**: Calico is suitable for larger, more complex Kubernetes environments where advanced networking features, such as network policy enforcement and high performance, are required.
+
+### 3. Cilium
+- **Overview**: Cilium is a modern networking solution that leverages eBPF (extended Berkeley Packet Filter) technology in the Linux kernel to provide high-performance networking and security for Kubernetes.
+- **How It Works**: Cilium uses eBPF to dynamically insert code into the Linux kernel, allowing for efficient packet processing and advanced features like load balancing, network policies, and visibility. It can operate in both Layer 3 and Layer 7 (application layer) modes, enabling fine-grained control over traffic.
+- **Use Cases**: Cilium is ideal for cloud-native applications that require advanced networking capabilities, observability, and security features, especially in microservices architectures.
+
+### Summary
+- **Flannel**: Simple overlay network, easy to set up, suitable for basic use cases.
+- **Calico**: Advanced networking with Layer 3 capabilities, supports network policies, suitable for larger environments.
+- **Cilium**: Leverages eBPF for high-performance networking and security, ideal for modern cloud-native applications.
+
+Each of these solutions has its strengths and is chosen based on the specific requirements of the Kubernetes deployment.
+
+--------------------
+
+User prompt 3 of 8 - 5/24/2025, 7:15:56 AM:
+ok step by step full guide on using Cillium please? with real world example
+
+GPT-4o mini:
+Setting up Cilium in a Kubernetes cluster involves several steps, including installing Cilium, configuring it, and deploying applications that utilize its features. Below is a step-by-step guide to help you get started with Cilium, along with a real-world example.
+
+### Prerequisites
+- A running Kubernetes cluster (version 1.11 or later).
+- `kubectl` command-line tool installed and configured to access your cluster.
+- Helm (optional, but recommended for easier installation).
+
+### Step 1: Install Cilium
+
+1. **Add the Cilium Helm repository** (if using Helm):
+   ```bash
+   helm repo add cilium https://helm.cilium.io/
+   helm repo update
+   ```
+
+2. **Install Cilium using Helm**:
+   ```bash
+   helm install cilium cilium/cilium --version <latest-version> --namespace kube-system --set global.k8s.enabled=true
+   ```
+   Replace `<latest-version>` with the latest version of Cilium available in the Helm repository.
+
+3. **Verify the installation**:
+   ```bash
+   kubectl get pods -n kube-system
+   ```
+   You should see Cilium pods running in the `kube-system` namespace.
+
+### Step 2: Configure Cilium
+
+Cilium can be configured using various options. For basic usage, the default settings are usually sufficient. However, you can customize the configuration by modifying the Helm values during installation or by editing the ConfigMap after installation.
+
+### Step 3: Deploy a Sample Application
+
+For this example, we will deploy a simple application consisting of two services: a frontend and a backend. The frontend will communicate with the backend using Cilium's networking features.
+
+1. **Create a namespace for the application**:
+   ```bash
+   kubectl create namespace demo
+   ```
+
+2. **Deploy the backend service**:
+   Create a file named `backend.yaml` with the following content:
+   ```yaml
+   apiVersion: apps/v1
+   kind: Deployment
+   metadata:
+     name: backend
+     namespace: demo
+   spec:
+     replicas: 2
+     selector:
+       matchLabels:
+         app: backend
+     template:
+       metadata:
+         labels:
+           app: backend
+       spec:
+         containers:
+         - name: backend
+           image: hashicorp/http-echo
+           args:
+           - "-text=Hello from the backend!"
+           ports:
+           - containerPort: 5678
+   ---
+   apiVersion: v1
+   kind: Service
+   metadata:
+     name: backend
+     namespace: demo
+   spec:
+     ports:
+     - port: 5678
+       targetPort: 5678
+     selector:
+       app: backend
+   ```
+
+   Deploy the backend:
+   ```bash
+   kubectl apply -f backend.yaml
+   ```
+
+3. **Deploy the frontend service**:
+   Create a file named `frontend.yaml` with the following content:
+   ```yaml
+   apiVersion: apps/v1
+   kind: Deployment
+   metadata:
+     name: frontend
+     namespace: demo
+   spec:
+     replicas: 2
+     selector:
+       matchLabels:
+         app: frontend
+     template:
+       metadata:
+         labels:
+           app: frontend
+       spec:
+         containers:
+         - name: frontend
+           image: hashicorp/http-echo
+           args:
+           - "-text=Hello from the frontend! Connecting to backend..."
+           ports:
+           - containerPort: 5678
+   ---
+   apiVersion: v1
+   kind: Service
+   metadata:
+     name: frontend
+     namespace: demo
+   spec:
+     ports:
+     - port: 5678
+       targetPort: 5678
+     selector:
+       app: frontend
+   ```
+
+   Deploy the frontend:
+   ```bash
+   kubectl apply -f frontend.yaml
+   ```
+
+### Step 4: Configure Network Policies (Optional)
+
+Cilium allows you to define network policies to control traffic between services. For example, you can create a policy that allows only the frontend to communicate with the backend.
+
+Create a file named `network-policy.yaml` with the following content:
+```yaml
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-frontend-to-backend
+  namespace: demo
+spec:
+  endpointSelector:
+    matchLabels:
+      app: frontend
+  ingress:
+  - fromEndpoints:
+    - matchLabels:
+        app: backend
+```
+
+Apply the network policy:
+```bash
+kubectl apply -f network-policy.yaml
+```
+
+### Step 5: Test the Application
+
+1. **Get the frontend service's IP**:
+   ```bash
+   kubectl get svc -n demo
+   ```
+
+2. **Access the frontend service**:
+   You can use `kubectl port-forward` to access the frontend service:
+   ```bash
+   kubectl port-forward
+
+--------------------
+
+User prompt 4 of 8 - 5/24/2025, 7:36:10 AM:
+continue
+
+GPT-4o mini:
+Certainly! Let's continue from where we left off, focusing on accessing the frontend service and testing the application.
+
+### Step 5 (Continued): Test the Application
+
+2. **Access the frontend service** (continued):
+   You can use `kubectl port-forward` to access the frontend service. Run the following command in a terminal:
+   ```bash
+   kubectl port-forward svc/frontend -n demo 8080:5678
+   ```
+   This command forwards port 8080 on your local machine to port 5678 on the frontend service in the Kubernetes cluster.
+
+3. **Test the frontend service**:
+   Open a web browser or use a tool like `curl` to access the frontend service:
+   ```bash
+   curl http://localhost:8080
+   ```
+   You should see the response:
+   ```
+   Hello from the frontend! Connecting to backend...
+   ```
+
+4. **Test the backend service** (optional):
+   If you want to directly test the backend service, you can also port-forward it:
+   ```bash
+   kubectl port-forward svc/backend -n demo 8081:5678
+   ```
+   Then, access the backend service:
+   ```bash
+   curl http://localhost:8081
+   ```
+   You should see the response:
+   ```
+   Hello from the backend!
+   ```
+
+### Step 6: Verify Cilium Functionality
+
+1. **Check Cilium status**:
+   You can check the status of Cilium and its components using:
+   ```bash
+   kubectl -n kube-system get pods
+   ```
+   Ensure that all Cilium pods are running without errors.
+
+2. **View Cilium network policies**:
+   To see the network policies you have created, you can run:
+   ```bash
+   kubectl get ciliumnetworkpolicies -n demo
+   ```
+
+3. **Check Cilium connectivity**:
+   You can use Cilium's built-in tools to check connectivity between pods. For example, you can use the `cilium connectivity` command:
+   ```bash
+   kubectl exec -it <frontend-pod-name> -n demo -- cilium connectivity test
+   ```
+   Replace `<frontend-pod-name>` with the name of one of your frontend pods. This command will test the connectivity between the frontend and backend pods.
+
+### Step 7: Clean Up
+
+Once you are done testing, you can clean up the resources you created:
+
+1. **Delete the application resources**:
+   ```bash
+   kubectl delete namespace demo
+   ```
+
+2. **Uninstall Cilium** (if you want to remove it):
+   If you installed Cilium using Helm, you can uninstall it with:
+   ```bash
+   helm uninstall cilium -n kube-system
+   ```
+
+### Summary
+
+In this guide, you learned how to:
+
+- Install Cilium in a Kubernetes cluster.
+- Deploy a sample application with frontend and backend services.
+- Optionally configure network policies to control traffic.
+- Test the application and verify Cilium's functionality.
+
+Cilium provides advanced networking capabilities, including observability and security features, making it a powerful choice for cloud-native applications. You can further explore Cilium's documentation for more advanced configurations and features, such as load balancing, service mesh integration, and observability tools.
+
+--------------------
+
+User prompt 5 of 8 - 5/24/2025, 8:28:59 AM:
+ok what about other services and use cases cillium can have other than network policies for pod accesses? 
+
+GPT-4o mini:
+Cilium offers a range of advanced networking and security features beyond just network policies for pod access. Here are some of the key services and use cases that Cilium can provide:
+
+### 1. **Load Balancing**
+Cilium can perform load balancing for services within a Kubernetes cluster. It supports both Layer 4 (TCP/UDP) and Layer 7 (HTTP) load balancing, allowing you to distribute traffic across multiple pod instances efficiently.
+
+### 2. **Service Mesh Integration**
+Cilium can integrate with service mesh technologies like Istio and Envoy. This allows for advanced traffic management, observability, and security features, such as mutual TLS (mTLS) for secure communication between services.
+
+### 3. **Transparent Encryption**
+Cilium supports transparent encryption of traffic between pods using IPsec or WireGuard. This ensures that data in transit is secure, which is particularly important for sensitive applications.
+
+### 4. **Observability and Monitoring**
+Cilium provides observability features that allow you to monitor network traffic and performance. It integrates with tools like Prometheus and Grafana to visualize metrics and logs. Cilium also supports Hubble, a networking observability tool that provides real-time visibility into service dependencies, traffic flows, and performance metrics.
+
+### 5. **Identity-Based Security**
+Cilium uses identity-based security, which means that network policies can be defined based on the identity of the workloads rather than their IP addresses. This allows for more dynamic and flexible security policies that adapt to changes in the environment.
+
+### 6. **Network Policy Enforcement**
+Beyond simple ingress and egress rules, Cilium supports more complex network policies, including:
+   - **Layer 7 Policies**: Define rules based on HTTP methods, paths, and headers, allowing for fine-grained control over application traffic.
+   - **DNS Policies**: Control traffic based on DNS names, enabling policies that can adapt to changes in service discovery.
+
+### 7. **Multi-Cluster Networking**
+Cilium can facilitate networking across multiple Kubernetes clusters, allowing for seamless communication between services running in different clusters. This is useful for organizations that operate in multi-cloud or hybrid cloud environments.
+
+### 8. **Integration with Kubernetes Events**
+Cilium can react to Kubernetes events, allowing it to automatically adjust network policies and configurations based on changes in the cluster, such as scaling up or down services.
+
+### 9. **Network Performance Optimization**
+Cilium leverages eBPF to optimize network performance by reducing the overhead associated with traditional networking stacks. This can lead to lower latency and higher throughput for applications.
+
+### 10. **Security Auditing and Compliance**
+Cilium can help organizations meet compliance requirements by providing detailed logs and metrics about network traffic and policy enforcement. This can be useful for auditing and ensuring that security policies are being followed.
+
+### Use Cases
+
+1. **Microservices Architecture**: In a microservices environment, Cilium can manage complex service-to-service communication, enforce security policies, and provide observability into traffic patterns.
+
+2. **Multi-Tenant Environments**: Cilium can be used to isolate network traffic between different tenants in a shared Kubernetes cluster, ensuring that each tenant's workloads are secure and cannot access each other's resources.
+
+3. **Regulatory Compliance**: Organizations in regulated industries can use Cilium to enforce strict network policies, encrypt traffic, and maintain detailed logs for auditing purposes.
+
+4. **Cloud-Native Applications**: Cilium is well-suited for cloud-native applications that require dynamic scaling, service discovery, and secure communication between services.
+
+5. **Edge Computing**: In edge computing scenarios, Cilium can help manage network traffic between edge devices and cloud services, ensuring secure and efficient communication.
+
+By leveraging these features, Cilium can enhance the security, performance, and observability of Kubernetes-based applications, making it a powerful tool for modern cloud-native environments.
+
+--------------------
+
+User prompt 6 of 8 - 5/24/2025, 8:35:35 AM:
+ok so give me full examples of cillium on loadbalancing, service mesh and observability plus layer 7 network and dns policies ?  
+
+GPT-4o mini:
+Certainly! Below are full examples demonstrating how to use Cilium for load balancing, service mesh integration, observability, Layer 7 network policies, and DNS policies in a Kubernetes environment.
+
+### Example 1: Load Balancing
+
+In this example, we will deploy a simple web application with multiple replicas and use Cilium to load balance traffic to these replicas.
+
+1. **Deploy a Sample Application**:
+   Create a file named `web-app.yaml` with the following content:
+   ```yaml
+   apiVersion: apps/v1
+   kind: Deployment
+   metadata:
+     name: web-app
+     namespace: demo
+   spec:
+     replicas: 3
+     selector:
+       matchLabels:
+         app: web-app
+     template:
+       metadata:
+         labels:
+           app: web-app
+       spec:
+         containers:
+         - name: web-app
+           image: hashicorp/http-echo
+           args:
+           - "-text=Hello from the web app!"
+           ports:
+           - containerPort: 5678
+   ---
+   apiVersion: v1
+   kind: Service
+   metadata:
+     name: web-app
+     namespace: demo
+   spec:
+     ports:
+     - port: 80
+       targetPort: 5678
+     selector:
+       app: web-app
+     type: ClusterIP
+   ```
+
+2. **Deploy the Application**:
+   ```bash
+   kubectl apply -f web-app.yaml -n demo
+   ```
+
+3. **Test Load Balancing**:
+   You can access the service using `kubectl port-forward`:
+   ```bash
+   kubectl port-forward svc/web-app -n demo 8080:80
+   ```
+   Then, in a separate terminal, you can send multiple requests to see the load balancing in action:
+   ```bash
+   for i in {1..10}; do curl http://localhost:8080; done
+   ```
+
+### Example 2: Service Mesh Integration
+
+In this example, we will integrate Cilium with Istio to manage traffic between services.
+
+1. **Install Istio**:
+   Follow the [Istio installation guide](https://istio.io/latest/docs/setup/install/) to install Istio in your Kubernetes cluster.
+
+2. **Deploy Sample Services**:
+   Create a file named `istio-sample.yaml` with the following content:
+   ```yaml
+   apiVersion: apps/v1
+   kind: Deployment
+   metadata:
+     name: productpage
+     namespace: demo
+   spec:
+     replicas: 2
+     selector:
+       matchLabels:
+         app: productpage
+     template:
+       metadata:
+         labels:
+           app: productpage
+       spec:
+         containers:
+         - name: productpage
+           image: istio/examples-bookinfo-productpage-v1:latest
+           ports:
+           - containerPort: 9080
+   ---
+   apiVersion: v1
+   kind: Service
+   metadata:
+     name: productpage
+     namespace: demo
+   spec:
+     ports:
+     - port: 9080
+       targetPort: 9080
+     selector:
+       app: productpage
+   ```
+
+3. **Deploy the Services**:
+   ```bash
+   kubectl apply -f istio-sample.yaml -n demo
+   ```
+
+4. **Configure Istio Gateway**:
+   Create a file named `istio-gateway.yaml`:
+   ```yaml
+   apiVersion: networking.istio.io/v1alpha3
+   kind: Gateway
+   metadata:
+     name: productpage-gateway
+     namespace: demo
+   spec:
+     selector:
+       istio: ingressgateway
+     servers:
+     - port:
+         number: 80
+         name: http
+         protocol: HTTP
+       hosts:
+       - "*"
+   ```
+
+5. **Apply the Gateway**:
+   ```bash
+   kubectl apply -f istio-gateway.yaml -n demo
+   ```
+
+6. **Access the Service**:
+   Use `kubectl port-forward` to access the Istio ingress gateway:
+   ```bash
+   kubectl port-forward svc/istio-ingressgateway -n istio-system 8080:80
+   ```
+   Then access the product page:
+   ```bash
+   curl http://localhost:8080/productpage
+   ```
+
+### Example 3: Observability with Hubble
+
+Cilium provides observability through Hubble, which allows you to monitor network traffic.
+
+1. **Install Hubble**:
+   Follow the [Hubble installation guide](https://docs.cilium.io/en/stable/gettingstarted/hubble/) to install Hubble in your cluster.
+
+2. **Enable Hubble**:
+   If you installed Cilium with Helm, you can enable Hubble by setting the following values:
+   ```bash
+   helm upgrade cilium cilium/cilium --namespace kube-system --set hubble.enabled=true --
+
+--------------------
+
+User prompt 7 of 8 - 5/24/2025, 9:16:52 AM:
+continue
+
+GPT-4o mini:
+Certainly! Let's continue with the observability setup using Hubble and then move on to Layer 7 network policies and DNS policies.
+
+### Example 3 (Continued): Observability with Hubble
+
+3. **Enable Hubble** (continued):
+   If you installed Cilium with Helm, you can enable Hubble by setting the following values:
+   ```bash
+   helm upgrade cilium cilium/cilium --namespace kube-system --set hubble.enabled=true --set hubble.relay.enabled=true
+   ```
+
+4. **Verify Hubble Installation**:
+   After enabling Hubble, you can check if the Hubble relay is running:
+   ```bash
+   kubectl get pods -n kube-system | grep hubble
+   ```
+
+5. **Access Hubble UI**:
+   You can access the Hubble UI to visualize network traffic:
+   ```bash
+   kubectl port-forward -n kube-system svc/hubble-ui 8081:80
+   ```
+   Then, open your browser and navigate to `http://localhost:8081` to see the Hubble UI.
+
+6. **Monitor Traffic**:
+   You can also use the Hubble CLI to monitor traffic in real-time:
+   ```bash
+   hubble observe
+   ```
+   This command will show you the network flows between services, including source and destination IPs, ports, and protocols.
+
+### Example 4: Layer 7 Network Policies
+
+In this example, we will create Layer 7 network policies to control HTTP traffic between services.
+
+1. **Deploy a Sample Application**:
+   Create a file named `http-app.yaml` with the following content:
+   ```yaml
+   apiVersion: apps/v1
+   kind: Deployment
+   metadata:
+     name: http-app
+     namespace: demo
+   spec:
+     replicas: 2
+     selector:
+       matchLabels:
+         app: http-app
+     template:
+       metadata:
+         labels:
+           app: http-app
+       spec:
+         containers:
+         - name: http-app
+           image: hashicorp/http-echo
+           args:
+           - "-text=Hello from HTTP App!"
+           ports:
+           - containerPort: 5678
+   ---
+   apiVersion: v1
+   kind: Service
+   metadata:
+     name: http-app
+     namespace: demo
+   spec:
+     ports:
+     - port: 80
+       targetPort: 5678
+     selector:
+       app: http-app
+   ```
+
+2. **Deploy the Application**:
+   ```bash
+   kubectl apply -f http-app.yaml -n demo
+   ```
+
+3. **Create Layer 7 Network Policy**:
+   Create a file named `layer7-policy.yaml` with the following content:
+   ```yaml
+   apiVersion: cilium.io/v2
+   kind: CiliumNetworkPolicy
+   metadata:
+     name: allow-http
+     namespace: demo
+   spec:
+     endpointSelector:
+       matchLabels:
+         app: http-app
+     ingress:
+     - fromEndpoints:
+       - matchLabels:
+           app: http-app
+       toPorts:
+       - ports:
+         - port: "80"
+           protocol: TCP
+         rules:
+           http:
+           - method: GET
+             path: /  # Allow GET requests to the root path
+   ```
+
+4. **Apply the Layer 7 Policy**:
+   ```bash
+   kubectl apply -f layer7-policy.yaml -n demo
+   ```
+
+5. **Test the Layer 7 Policy**:
+   You can test the policy by sending a GET request to the HTTP app:
+   ```bash
+   kubectl port-forward svc/http-app -n demo 8080:80
+   curl http://localhost:8080
+   ```
+   You should see the response:
+   ```
+   Hello from HTTP App!
+   ```
+
+   If you try to send a POST request, it should be denied:
+   ```bash
+   curl -X POST http://localhost:8080
+   ```
+   You should receive an error indicating that the request is not allowed.
+
+### Example 5: DNS Policies
+
+In this example, we will create a DNS policy to control traffic based on DNS names.
+
+1. **Deploy a Sample Application**:
+   You can use the same `http-app.yaml` from the previous example.
+
+2. **Deploy the Application**:
+   ```bash
+   kubectl apply -f http-app.yaml -n demo
+   ```
+
+3. **Create DNS Policy**:
+   Create a file named `dns-policy.yaml` with the following content:
+   ```yaml
+   apiVersion: cilium.io/v2
+   kind: CiliumNetworkPolicy
+   metadata:
+     name: allow-dns
+     namespace: demo
+   spec:
+     endpointSelector:
+       matchLabels:
+         app: http-app
+     ingress:
+     - fromEndpoints:
+       - matchLabels:
+           app: http-app
+       toPorts:
+       -
+
+--------------------
+
+User prompt 8 of 8 - 5/24/2025, 9:17:25 AM:
+continue
+
+GPT-4o mini:
+Certainly! Let's continue with the DNS policy example.
+
+### Example 5 (Continued): DNS Policies
+
+3. **Create DNS Policy** (continued):
+   Create a file named `dns-policy.yaml` with the following content:
+   ```yaml
+   apiVersion: cilium.io/v2
+   kind: CiliumNetworkPolicy
+   metadata:
+     name: allow-dns
+     namespace: demo
+   spec:
+     endpointSelector:
+       matchLabels:
+         app: http-app
+     ingress:
+     - fromEndpoints:
+       - matchLabels:
+           app: http-app
+       toPorts:
+       - ports:
+         - port: "80"
+           protocol: TCP
+         rules:
+           dns:
+           - matchName: "http-app.demo.svc.cluster.local"  # Allow DNS requests to the service
+   ```
+
+4. **Apply the DNS Policy**:
+   ```bash
+   kubectl apply -f dns-policy.yaml -n demo
+   ```
+
+5. **Test the DNS Policy**:
+   You can test the DNS policy by sending a request to the HTTP app using its DNS name:
+   ```bash
+   kubectl port-forward svc/http-app -n demo 8080:80
+   curl http://http-app.demo.svc.cluster.local:80
+   ```
+   You should see the response:
+   ```
+   Hello from HTTP App!
+   ```
+
+   If you try to send a request to a different DNS name that is not allowed by the policy, it should be denied. For example, if you had another service and tried to access it using its DNS name, it would not be allowed if it doesn't match the policy.
+
+### Summary of Examples
+
+1. **Load Balancing**: Demonstrated how to deploy a web application with multiple replicas and use Cilium to load balance traffic to these replicas.
+
+2. **Service Mesh Integration**: Integrated Cilium with Istio to manage traffic between services, allowing for advanced traffic management and observability.
+
+3. **Observability with Hubble**: Installed Hubble to monitor network traffic and visualize service dependencies in real-time.
+
+4. **Layer 7 Network Policies**: Created Layer 7 network policies to control HTTP traffic based on methods and paths, allowing for fine-grained control over application traffic.
+
+5. **DNS Policies**: Created DNS policies to control traffic based on DNS names, allowing for more dynamic and flexible security policies.
+
+These examples illustrate the powerful capabilities of Cilium in managing networking, security, and observability in Kubernetes environments. You can further explore Cilium's documentation for more advanced configurations and features tailored to your specific use cases.
 ### Summary
 
 By following these steps, you can easily roll back to a specific version of a Deployment in Kubernetes. This is useful for reverting to a known stable state when issues arise with newer deployments. Always ensure to monitor the application after the rollback to confirm that it is functioning as expected.
