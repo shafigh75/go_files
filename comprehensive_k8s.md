@@ -6810,6 +6810,67 @@ kubectl exec -it nfs-test-statefulset-0 -- df -h
 ---
 
 
+### Taints and tolerations:
+In Kubernetes, **taints** and **tolerations** are mechanisms used to control which pods can be scheduled on which nodes. They help ensure that certain workloads run only on specific nodes, based on the characteristics of those nodes.
 
+### Taints
 
+A **taint** is a property that you can apply to a node. It marks the node in a way that prevents pods from being scheduled on it unless those pods have a matching toleration. Taints have three parts:
+
+1. **Key**: A label that identifies the taint.
+2. **Value**: A value associated with the key.
+3. **Effect**: What happens to pods that do not tolerate the taint. There are three effects:
+   - `NoSchedule`: Pods that do not tolerate the taint will not be scheduled on the node.
+   - `PreferNoSchedule`: Kubernetes will try to avoid scheduling pods that do not tolerate the taint, but it’s not guaranteed.
+   - `NoExecute`: Pods that do not tolerate the taint will be evicted from the node if they are already running there.
+
+### Tolerations
+
+A **toleration** is a property that you can apply to a pod. It allows the pod to be scheduled on nodes with matching taints. Tolerations specify which taints the pod can tolerate.
+
+### Real Example
+
+Imagine you have a Kubernetes cluster with two types of nodes:
+
+1. **High-Performance Nodes**: These nodes are equipped with powerful hardware and are meant for running resource-intensive applications.
+2. **Standard Nodes**: These nodes are for running less demanding applications.
+
+#### Step 1: Apply Taints to Nodes
+
+You can taint the high-performance nodes to ensure that only specific pods can run on them. For example, you might apply a taint like this:
+
+```bash
+kubectl taint nodes high-performance-node1 dedicated=high-performance:NoSchedule
+```
+
+This command adds a taint with the key `dedicated`, value `high-performance`, and effect `NoSchedule` to the node `high-performance-node1`. This means that no pods can be scheduled on this node unless they have a matching toleration.
+
+#### Step 2: Add Tolerations to Pods
+
+Now, if you have a pod that needs to run on the high-performance node, you would add a toleration to that pod's specification:
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: my-high-performance-app
+spec:
+  tolerations:
+  - key: "dedicated"
+    operator: "Equal"
+    value: "high-performance"
+    effect: "NoSchedule"
+  containers:
+  - name: my-app
+    image: my-high-performance-image
+```
+
+In this example, the pod `my-high-performance-app` has a toleration for the taint we applied to the high-performance node. This means it can be scheduled on that node, while other pods without this toleration will not be able to.
+
+### Summary
+
+- **Taints** are applied to nodes to restrict which pods can run on them.
+- **Tolerations** are applied to pods to allow them to be scheduled on nodes with specific taints.
+
+This mechanism helps manage resources effectively and ensures that critical applications run on the appropriate nodes in a Kubernetes cluster.
 
