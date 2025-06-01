@@ -168,7 +168,7 @@ local tasklist_buttons = gears.table.join(
                                           end))
 
 local function set_wallpaper(s)
-    awful.spawn.with_shell("/home/mohammad/done/startup.sh")
+    awful.spawn.with_shell("/home/mohammad/startup.sh")
     awful.spawn("feh --bg-scale /home/mohammad/Downloads/wall.png")
     -- Wallpaper
     --if beautiful.wallpaper then
@@ -214,6 +214,45 @@ awful.screen.connect_for_each_screen(function(s)
         buttons = tasklist_buttons
     }
 
+
+	-- Battery widget
+	mybattery = wibox.widget {
+	    {
+		id = "icon",
+		widget = wibox.widget.imagebox,
+	    },
+	    {
+		id = "text",
+		widget = wibox.widget.textbox,
+	    },
+	    layout = wibox.layout.fixed.horizontal,
+	}
+
+	-- Function to update the battery widget
+	local function update_battery()
+	    local f = io.popen("acpi -b")
+	    local battery_info = f:read("*all")
+	    f:close()
+
+	    local battery_percentage = battery_info:match("(%d+%%)")
+	    local battery_status = battery_info:match("(%a+),")
+
+	    mybattery:get_children_by_id("text")[1].text = battery_percentage
+
+	    if battery_status:match("Charging") then
+		mybattery:get_children_by_id("icon")[1]:set_image("/home/mohammad/Downloads/charge.png")
+	    else
+		mybattery:get_children_by_id("icon")[1]:set_image("/home/mohammad/Downloads/discharge.png")
+	    end
+	end
+
+	-- Update the battery widget every 5 seconds
+	mybattery_timer = timer({ timeout = 5 })
+	mybattery_timer:connect_signal("timeout", update_battery)
+	mybattery_timer:start()
+	update_battery()  -- Initial update
+
+
     -- Create the wibox
     s.mywibox = awful.wibar({ position = "top", screen = s })
 
@@ -229,6 +268,7 @@ awful.screen.connect_for_each_screen(function(s)
         s.mytasklist, -- Middle widget
         { -- Right widgets
             layout = wibox.layout.fixed.horizontal,
+	    mybattery,
             mykeyboardlayout,
             wibox.widget.systray(),
             mytextclock,
