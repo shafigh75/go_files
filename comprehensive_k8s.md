@@ -6982,3 +6982,278 @@ users:
 - **Contexts**: Named configurations that link a cluster, user, and namespace, making it easy to switch between different environments.
 
 By effectively using contexts and configurations, you can manage multiple Kubernetes clusters and namespaces seamlessly, improving your workflow and productivity in a DevOps environment.
+
+
+
+
+### Tekton (kubernetes native CI/CD)
+Here's a comprehensive tutorial on Kubernetes Tekton, covering setup, configuration, and a real-life use case example.
+
+### What is Tekton?
+
+Tekton is an open-source framework for creating CI/CD (Continuous Integration/Continuous Deployment) systems. It provides Kubernetes-native resources for defining and running pipelines.
+
+### Prerequisites
+
+1. **Kubernetes Cluster**: You need a running Kubernetes cluster. You can use Minikube, GKE, EKS, or any other Kubernetes provider.
+2. **kubectl**: The Kubernetes command-line tool should be installed and configured to interact with your cluster.
+3. **Tekton CLI (tkn)**: Install the Tekton CLI to interact with Tekton resources easily.
+
+### Step 1: Install Tekton
+
+1. **Install Tekton Pipelines**:
+   You can install Tekton Pipelines using the following command:
+
+   ```bash
+   kubectl apply --filename https://github.com/tektoncd/pipeline/releases/latest/download/release.yaml
+   ```
+
+2. **Verify Installation**:
+   Check if the Tekton components are running:
+
+   ```bash
+   kubectl get pods --namespace tekton-pipelines
+   ```
+
+### Step 2: Create a Simple Pipeline
+
+#### 2.1 Define Tasks
+
+Create a file named `tasks.yaml` to define the tasks. For example, a simple task to build a Docker image:
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: build
+spec:
+  steps:
+    - name: build
+      image: docker
+      script: |
+        #!/usr/bin/env bash
+        docker build -t my-image:latest .
+```
+
+#### 2.2 Define the Pipeline
+
+Create a file named `pipeline.yaml` to define the pipeline that uses the task:
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: my-pipeline
+spec:
+  tasks:
+    - name: build-task
+      taskRef:
+        name: build
+```
+
+#### 2.3 Apply the Task and Pipeline
+
+Run the following commands to apply the task and pipeline:
+
+```bash
+kubectl apply -f tasks.yaml
+kubectl apply -f pipeline.yaml
+```
+
+### Step 3: Create a PipelineRun
+
+A `PipelineRun` is an instance of a pipeline execution. Create a file named `pipeline-run.yaml`:
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  name: my-pipeline-run
+spec:
+  pipelineRef:
+    name: my-pipeline
+```
+
+Apply the `PipelineRun`:
+
+```bash
+kubectl apply -f pipeline-run.yaml
+```
+
+### Step 4: Monitor the Pipeline
+
+You can monitor the pipeline execution using:
+
+```bash
+kubectl get pipelineruns
+```
+
+To get detailed information about a specific `PipelineRun`:
+
+```bash
+kubectl describe pipelinerun my-pipeline-run
+```
+
+### Real-Life Use Case Example
+
+#### Scenario: CI/CD for a Node.js Application
+
+1. **Repository Structure**:
+   - `Dockerfile`: To build the Node.js application.
+   - `app.js`: Your Node.js application code.
+   - `tasks.yaml`: Define tasks for building and deploying.
+   - `pipeline.yaml`: Define the CI/CD pipeline.
+   - `pipeline-run.yaml`: Define the pipeline run.
+
+2. **Dockerfile Example**:
+
+```dockerfile
+FROM node:14
+WORKDIR /usr/src/app
+COPY package*.json ./
+RUN npm install
+COPY . .
+CMD ["node", "app.js"]
+```
+
+3. **Define Tasks**:
+   - **Build Task**: Build the Docker image.
+   - **Deploy Task**: Deploy the image to a Kubernetes cluster.
+
+4. **Pipeline Definition**:
+   - Use the build task followed by the deploy task.
+
+5. **Run the Pipeline**:
+   - Trigger the pipeline using `PipelineRun`.
+
+### Conclusion
+
+This tutorial provides a basic overview of setting up Tekton in a Kubernetes environment and creating a simple CI/CD pipeline. You can expand this by adding more tasks, integrating with Git repositories, and using Tekton triggers for event-driven pipelines. For more advanced features, refer to the [Tekton documentation](https://tekton.dev/docs/).
+
+
+you can also define when Tekton pipelines get triggered using **Triggers**. Tekton Triggers allow you to create event-driven pipelines that respond to events from various sources, such as GitHub webhooks, GitLab, or other event sources.
+
+### Setting Up Tekton Triggers
+
+Here’s how to set up triggers for your Tekton pipelines:
+
+#### Step 1: Install Tekton Triggers
+
+If you haven't already installed Tekton Triggers, you can do so with the following command:
+
+```bash
+kubectl apply --filename https://github.com/tektoncd/triggers/releases/latest/download/release.yaml
+```
+
+#### Step 2: Create a TriggerTemplate
+
+A `TriggerTemplate` defines the resources that will be created when an event occurs. Create a file named `trigger-template.yaml`:
+
+```yaml
+apiVersion: triggers.tekton.dev/v1beta1
+kind: TriggerTemplate
+metadata:
+  name: my-trigger-template
+spec:
+  params:
+    - name: gitrevision
+      description: The git revision to build
+      default: "main"
+  resourcetemplates:
+    - apiVersion: tekton.dev/v1beta1
+      kind: PipelineRun
+      metadata:
+        generateName: my-pipeline-run-
+      spec:
+        pipelineRef:
+          name: my-pipeline
+        params:
+          - name: gitrevision
+            value: $(tt.params.gitrevision)
+```
+
+#### Step 3: Create a TriggerBinding
+
+A `TriggerBinding` maps the incoming event data to the parameters defined in the `TriggerTemplate`. Create a file named `trigger-binding.yaml`:
+
+```yaml
+apiVersion: triggers.tekton.dev/v1beta1
+kind: TriggerBinding
+metadata:
+  name: my-trigger-binding
+spec:
+  params:
+    - name: gitrevision
+      value: $(body.ref)
+```
+
+#### Step 4: Create an EventListener
+
+An `EventListener` listens for incoming events and triggers the appropriate `TriggerTemplate`. Create a file named `event-listener.yaml`:
+
+```yaml
+apiVersion: triggers.tekton.dev/v1beta1
+kind: EventListener
+metadata:
+  name: my-event-listener
+spec:
+  triggers:
+    - name: my-trigger
+      bindings:
+        - ref: my-trigger-binding
+      template:
+        ref: my-trigger-template
+```
+
+#### Step 5: Apply the Resources
+
+Run the following commands to apply the `TriggerTemplate`, `TriggerBinding`, and `EventListener`:
+
+```bash
+kubectl apply -f trigger-template.yaml
+kubectl apply -f trigger-binding.yaml
+kubectl apply -f event-listener.yaml
+```
+
+#### Step 6: Expose the EventListener
+
+To receive events, you need to expose the `EventListener`. You can do this using a Kubernetes service. Create a file named `event-listener-service.yaml`:
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: my-event-listener
+spec:
+  ports:
+    - port: 8080
+      targetPort: 8080
+  selector:
+    eventlistener: my-event-listener
+```
+
+Apply the service:
+
+```bash
+kubectl apply -f event-listener-service.yaml
+```
+
+#### Step 7: Configure Webhook
+
+Now, configure your Git repository (e.g., GitHub, GitLab) to send webhooks to the URL of your `EventListener`. The URL will typically look like this:
+
+```
+http://<your-kubernetes-cluster-ip>:<port>/triggers/my-event-listener
+```
+
+Make sure to replace `<your-kubernetes-cluster-ip>` and `<port>` with the appropriate values.
+
+### Example Triggering Scenario
+
+1. **Push Event**: When you push code to the specified branch (e.g., `main`), the webhook sends an event to the `EventListener`.
+2. **Trigger Execution**: The `EventListener` receives the event, processes it, and creates a `PipelineRun` using the `TriggerTemplate`.
+3. **Pipeline Execution**: The pipeline runs, executing the defined tasks.
+
+### Conclusion
+
+By using Tekton Triggers, you can create event-driven pipelines that automatically respond to changes in your code repository. This setup allows for continuous integration and deployment, making your CI/CD process more efficient and automated. For more advanced configurations and options, refer to the [Tekton Triggers documentation](https://tekton.dev/docs/triggers/).
