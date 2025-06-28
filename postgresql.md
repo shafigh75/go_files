@@ -91,3 +91,53 @@ done
 echo "🎯 Done."
 
 ```
+
+### grant replication to all dbs:
+
+```bash
+#!/bin/bash
+
+# === Configuration ===
+PG_USER="postgres"
+PG_PASSWORD="your_pg_password"
+PG_HOST="localhost"
+PG_PORT="5432"
+REPL_USER="replicator"
+
+# List of target databases
+DATABASES=(
+    play_fwc
+    play
+    play_ads
+    play_files
+    play_home
+    play_movie
+    play_movie_tmp
+    play_user_action
+    launcher
+    launcher_next
+    promotion
+    mag
+)
+
+export PGPASSWORD="$PG_PASSWORD"
+
+for db in "${DATABASES[@]}"; do
+    echo "🎯 Processing database: $db"
+
+    psql -U "$PG_USER" -h "$PG_HOST" -p "$PG_PORT" -d "$db" <<EOF
+-- Grant permissions to replication user on $db
+GRANT CONNECT ON DATABASE $db TO $REPL_USER;
+GRANT USAGE ON SCHEMA public TO $REPL_USER;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO $REPL_USER;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO $REPL_USER;
+EOF
+
+    echo "✅ Done with $db"
+    echo "-----------------------------"
+done
+
+echo "🎉 All databases processed."
+
+
+```
