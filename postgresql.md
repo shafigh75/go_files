@@ -56,7 +56,38 @@ for schema_file in "$SCHEMA_DIR"/*_schema.sql; do
 
     echo "✅ Done with $db_name"
     echo "---------------------------"
+
 done
 
 echo "🎉 All schemas processed."
+```
+
+
+### a bash script to find all dbs that have a publication named mohammad_pub:
+
+```bash
+#!/bin/bash
+
+# === Configuration ===
+PG_USER="postgres"
+PG_PASSWORD="your_pg_password"
+PG_HOST="localhost"
+PG_PORT="5432"
+
+export PGPASSWORD="$PG_PASSWORD"
+
+echo "🔍 Searching for publication 'mohammad_pub' in all databases..."
+
+# Get the list of databases excluding templates
+databases=$(psql -U "$PG_USER" -h "$PG_HOST" -p "$PG_PORT" -Atc "SELECT datname FROM pg_database WHERE datistemplate = false;")
+
+for db in $databases; do
+    result=$(psql -U "$PG_USER" -h "$PG_HOST" -p "$PG_PORT" -d "$db" -Atc "SELECT pubname FROM pg_publication WHERE pubname = 'mohammad_pub';")
+    if [[ "$result" == "mohammad_pub" ]]; then
+        echo "✅ Found 'mohammad_pub' in database: $db"
+    fi
+done
+
+echo "🎯 Done."
+
 ```
