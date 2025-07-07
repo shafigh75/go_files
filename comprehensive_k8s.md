@@ -7358,3 +7358,105 @@ But this only blocks **new pods**, and not as strict as taints. **Use taints if 
 
 ---
 
+
+
+
+`kubectl cordon` is used when you want to **temporarily prevent new pods from being scheduled on a node**, **without affecting the pods that are already running** on it.
+
+---
+
+## ✅ What does `kubectl cordon` do?
+
+```bash
+kubectl cordon <node-name>
+```
+
+* ⛔ **Prevents the scheduler** from placing **new pods** on the node
+* ✅ **Keeps running pods intact** — nothing is evicted or stopped
+* ✅ Used typically for **maintenance or draining preparation**
+
+---
+
+## 🧠 When Should You Use `cordon`?
+
+### 🔧 1. **Planned maintenance**
+
+You’re about to:
+
+* Update the OS or kernel
+* Patch or reboot the node
+* Upgrade Docker/containerd
+
+Use this sequence:
+
+```bash
+kubectl cordon <node>
+kubectl drain <node> --ignore-daemonsets --delete-emptydir-data
+```
+
+Then do maintenance and uncordon:
+
+```bash
+kubectl uncordon <node>
+```
+
+---
+
+### ⚙️ 2. **Manual control during debugging or rollout**
+
+If you’re testing a specific workload and don’t want anything else to be scheduled on the node:
+
+```bash
+kubectl cordon node01
+# Later
+kubectl uncordon node01
+```
+
+---
+
+### 🛠️ 3. **Cluster autoscaler hint**
+
+Cordoning can be used to **make nodes eligible for scale down** if no pods run on them.
+
+---
+
+## ❗ What `cordon` Does *Not* Do
+
+| Action                       | Cordon behavior              |
+| ---------------------------- | ---------------------------- |
+| Stops existing pods?         | ❌ No                         |
+| Evicts or drains workloads?  | ❌ No                         |
+| Prevents **all** scheduling? | ✅ Yes, for **new** pods only |
+| Is reversible?               | ✅ Yes (`kubectl uncordon`)   |
+
+---
+
+## 🆚 `cordon` vs `taint`
+
+| Feature                             | `cordon`                           | `taint`                            |
+| ----------------------------------- | ---------------------------------- | ---------------------------------- |
+| Blocks **all** scheduling           | ✅ Yes                              | ✅ (if `NoSchedule` or `NoExecute`) |
+| Allows fine-grained targeting       | ❌                                  | ✅ (workloads can tolerate taint)   |
+| Can still schedule tolerating pods? | ✅ if untainted                     | ❌ unless toleration is defined     |
+| Typical use case                    | Temporary maintenance, pause usage | Reserved nodes, node isolation     |
+
+---
+
+## 🧪 Bonus: Check cordon status
+
+```bash
+kubectl get nodes
+```
+
+You'll see a `SchedulingDisabled` status on cordoned nodes.
+
+Or:
+
+```bash
+kubectl describe node <node-name> | grep Taints
+```
+
+To verify taints (if any).
+
+---
+
