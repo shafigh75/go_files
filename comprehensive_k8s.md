@@ -7257,3 +7257,104 @@ Make sure to replace `<your-kubernetes-cluster-ip>` and `<port>` with the approp
 ### Conclusion
 
 By using Tekton Triggers, you can create event-driven pipelines that automatically respond to changes in your code repository. This setup allows for continuous integration and deployment, making your CI/CD process more efficient and automated. For more advanced configurations and options, refer to the [Tekton Triggers documentation](https://tekton.dev/docs/triggers/).
+
+
+
+
+### to prevent scheduling on a new node:
+If you're joining a new node to your Kubernetes cluster using `kubeadm join` but **don’t want the scheduler to place any pods on it** yet, the best approach is to **taint the node as `NoSchedule` immediately after join**, so that:
+
+✅ It joins the cluster
+❌ It won’t accept any pods (except those that tolerate the taint)
+
+---
+
+## ✅ Step-by-Step Guide: Join Node and Prevent Scheduling
+
+### 🧩 1. Run `kubeadm join` as usual on the new node
+
+Example:
+
+```bash
+sudo kubeadm join <master-ip>:6443 --token <token> --discovery-token-ca-cert-hash sha256:<hash>
+```
+
+---
+
+### 🛑 2. On the control plane, wait for the node to show up (in `NotReady` first)
+
+```bash
+kubectl get nodes
+```
+
+Once the node appears (even `NotReady` is okay), taint it:
+
+---
+
+### 🔒 3. Taint the node to block scheduling
+
+```bash
+kubectl taint node <node-name> node-role.kubernetes.io/custom=reserved:NoSchedule
+```
+
+🔍 Example:
+
+```bash
+kubectl taint node worker-node-3 node-role.kubernetes.io/reserved=reserved:NoSchedule
+```
+
+Now **no pod will be scheduled** on this node unless it tolerates the taint explicitly.
+
+---
+
+### 🔁 4. (Later) Allow specific workloads to run on it
+
+When you're ready to deploy to this node:
+
+#### A. Add a toleration in your deployment YAML:
+
+```yaml
+tolerations:
+  - key: "node-role.kubernetes.io/reserved"
+    operator: "Equal"
+    value: "reserved"
+    effect: "NoSchedule"
+```
+
+#### B. (Optionally) Use `nodeSelector` or `affinity` to **target the node**
+
+---
+
+### 🧼 5. Or, remove the taint completely (if no longer needed)
+
+```bash
+kubectl taint node <node-name> node-role.kubernetes.io/reserved:NoSchedule-
+```
+
+That trailing `-` **removes** the taint.
+
+---
+
+## ✅ Alternative (less preferred): Mark the node `Unschedulable`
+
+You can also cordon the node to prevent scheduling:
+
+```bash
+kubectl cordon <node-name>
+```
+
+But this only blocks **new pods**, and not as strict as taints. **Use taints if you want tighter control.**
+
+---
+
+## ✅ Summary
+
+| Step         | Command                                           |
+| ------------ | ------------------------------------------------- |
+| Join node    | `kubeadm join ...`                                |
+| Block pods   | `kubectl taint node <node> key=value:NoSchedule`  |
+| Allow later  | Add `tolerations` in deployment                   |
+| Remove block | `kubectl taint node <node> key=value:NoSchedule-` |
+
+---
+
