@@ -7681,3 +7681,95 @@ With a PDB:
 ---
 
 
+many people confuse **PodDisruptionBudget (PDB)** and **rolling update strategies** in Kubernetes, but they serve very **different purposes**.
+
+Let’s break it down clearly:
+
+---
+
+## 🔁 Rolling Update Strategy (Deployment)
+
+### 📌 Purpose:
+
+Controls **how updates to a deployment happen** — **internal** to Kubernetes when you change things like the image, replicas, etc.
+
+### 🧠 Example use case:
+
+> You deploy a new version of your app, and you want **zero downtime**.
+
+### 🔧 How it works:
+
+In a `Deployment`:
+
+```yaml
+strategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxUnavailable: 1
+    maxSurge: 1
+```
+
+This means:
+
+* **`maxUnavailable: 1`** → At most 1 pod can be down during the update.
+* **`maxSurge: 1`** → It can create up to 1 extra pod above the desired count during the rollout.
+
+✅ **Used for controlled updates only** (e.g., version bump).
+❌ Does **not** protect against node failures, maintenance, or drains.
+
+---
+
+## 🚧 PodDisruptionBudget (PDB)
+
+### 📌 Purpose:
+
+Protects your workload **from external voluntary disruptions** — like:
+
+* `kubectl drain`
+* Cluster autoscaler
+* Node upgrades/restarts
+* Admin cordon/evictions
+
+### 🧠 Example use case:
+
+> You’re draining a node, and you don’t want more than 1 pod of a service to be down.
+
+In a `PodDisruptionBudget`:
+
+```yaml
+spec:
+  minAvailable: 2
+```
+
+This means:
+
+* If draining a node would cause fewer than 2 pods to be running, Kubernetes **blocks** the eviction.
+
+✅ Used during **infrastructure-level events**.
+❌ Does **not** control rollout/update behavior.
+
+---
+
+## 🧠 Summary Table
+
+| Feature                                      | Rolling Update                | PodDisruptionBudget (PDB)               |
+| -------------------------------------------- | ----------------------------- | --------------------------------------- |
+| **Purpose**                                  | Manage app updates            | Prevent excessive voluntary disruptions |
+| **Used during**                              | Image updates, config changes | Node drain, upgrades, scale-down        |
+| **Location**                                 | Inside `Deployment` spec      | Separate `PodDisruptionBudget` object   |
+| **Protects availability**                    | During **deployment only**    | During **any voluntary disruption**     |
+| **Required for zero-downtime during drain?** | ❌ No                          | ✅ Yes                                   |
+| **Eviction aware?**                          | ❌ No                          | ✅ Yes (blocks evictions when violated)  |
+
+---
+
+## 🛠 Real-World Use Together
+
+You often **use both**:
+
+1. **Rolling update** to control **how** pods are updated.
+2. **PDB** to ensure **how many** must be kept alive during maintenance or autoscaler events.
+
+---
+
+
