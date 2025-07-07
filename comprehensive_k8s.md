@@ -7460,3 +7460,96 @@ To verify taints (if any).
 
 ---
 
+
+NOTE:
+At first glance, `cordon` **does** seem safe: it blocks scheduling until you manually uncordon.
+But in **real-world production**, there are **several ways it can be silently bypassed or undone** — often without your intent.
+
+Here are real, **practical examples where `cordon` cannot be trusted** for long-term scheduling control:
+
+---
+
+## ⚠️ Example 1: **Cluster Autoscaler Uncordons Automatically**
+
+### Scenario:
+
+You use the [Kubernetes Cluster Autoscaler](https://github.com/kubernetes/autoscaler/blob/master/cluster-autoscaler/FAQ.md) on AWS/GCP to manage nodes.
+
+* You `cordon` a node to keep it empty.
+* Autoscaler detects it’s underutilized, tries to scale it down.
+* It fails to drain it because it’s cordoned.
+* So, the autoscaler **automatically uncordons** the node to allow draining, or might even reschedule pods onto it.
+
+📌 **Result:** Your manually cordoned node is now **un-cordoned without you doing anything**, and pods may land on it.
+
+---
+
+## ⚠️ Example 2: **Human Error or Automation Reverts Cordoning**
+
+### Scenario:
+
+You run a fleet with multiple admins or GitOps tools (e.g. ArgoCD, Flux, or Terraform):
+
+* Someone sees a `SchedulingDisabled` node and thinks it’s misconfigured.
+
+* They run:
+
+  ```bash
+  kubectl uncordon <node-name>
+  ```
+
+* Or worse, a GitOps pipeline tries to enforce “node readiness” by ensuring all nodes are schedulable.
+
+📌 **Result:** Node becomes schedulable again — **accidentally**.
+
+---
+
+## ⚠️ Example 3: **Cordoned node still accepts pods via DaemonSets**
+
+Cordoning **does not** stop pods from being scheduled via `DaemonSets`.
+
+```yaml
+apiVersion: apps/v1
+kind: DaemonSet
+spec:
+  template:
+    spec:
+      containers:
+        - name: some-agent
+```
+
+📌 **Result:** Even when cordoned, the node may still get agents, logging daemons, etc.
+
+✅ `Taints` block **all** workloads unless they explicitly tolerate it — including DaemonSets.
+
+---
+
+## ⚠️ Example 4: **Cordoned node remains available for rescheduling after failures**
+
+### Scenario:
+
+* Node is cordoned.
+* A workload elsewhere fails and Kubernetes is under pressure.
+* The scheduler tries to rebalance critical workloads.
+* If a new `PodDisruptionBudget` or manual intervention happens, a pod may be re-created on the cordoned node (e.g., when node selectors and affinities push it there).
+
+📌 **Result:** Scheduler can bypass your intention without a taint in place.
+
+---
+
+## 🧠 Final Verdict
+
+| Control  | Reliable? | Protects from automation?         | Blocks everything?      | Use case                            |
+| -------- | --------- | --------------------------------- | ----------------------- | ----------------------------------- |
+| `cordon` | ❌         | ❌ No — can be reversed            | ❌ DaemonSets still land | Short-term ops or quick maintenance |
+| `taint`  | ✅         | ✅ Yes — only tolerations override | ✅ Yes                   | Long-term isolation or prep staging |
+
+---
+
+## ✅ Bottom Line
+
+> **Use `cordon` for maintenance.**
+> **Use `taint` when you want control.**
+
+---
+
