@@ -7864,3 +7864,271 @@ This tricks Kubernetes into seeing a change → triggers rollout.
 
 ---
 
+
+
+### containerd, ctr, crictl and runc:
+Here’s a practical, hands-on tutorial covering **containerd**, **runc**, and **crictl**—three essential tools in the container ecosystem, especially relevant for DevOps and Kubernetes. I'll cover **installation**, **basic usage**, **toolbox commands**, and **practical tips** for each. This will be helpful for both learning and as a quick reference!
+
+---
+
+# 1. **containerd**
+
+**containerd** is a high-level container runtime. It's the core component that orchestrates container lifecycle, image management, etc.
+
+## Installation
+
+**On Ubuntu/Debian:**
+
+```bash
+sudo apt-get update
+sudo apt-get install -y containerd
+```
+
+**On CentOS/RHEL:**
+
+```bash
+sudo yum install -y containerd
+```
+
+## Basic Usage
+
+### 1. Start and enable containerd
+
+```bash
+sudo systemctl start containerd
+sudo systemctl enable containerd
+```
+
+### 2. Check containerd version and status
+
+```bash
+containerd --version
+sudo systemctl status containerd
+```
+
+### 3. containerd CLI: `ctr`
+
+`ctr` is the low-level CLI for containerd.
+
+#### Pull an image
+
+```bash
+sudo ctr image pull docker.io/library/nginx:latest
+```
+
+#### List images
+
+```bash
+sudo ctr images list
+```
+
+#### Run a container
+
+```bash
+sudo ctr run --rm -t docker.io/library/nginx:latest mynginx /bin/sh
+```
+
+#### List containers
+
+```bash
+sudo ctr containers list
+```
+
+#### Stop a running container (by task)
+
+```bash
+sudo ctr tasks list
+sudo ctr tasks kill <task-id>
+```
+
+#### Remove a container
+
+```bash
+sudo ctr containers rm <container-id>
+```
+
+#### Remove an image
+
+```bash
+sudo ctr images rm <image-name>
+```
+
+---
+
+# 2. **runc**
+
+**runc** is a lightweight, low-level container runtime. containerd uses runc to create containers.
+
+## Installation
+
+**Usually, runc comes preinstalled with containerd**, but to install manually:
+
+```bash
+VERSION=$(curl -s https://api.github.com/repos/opencontainers/runc/releases/latest | grep tag_name | cut -d '"' -f 4)
+curl -LO https://github.com/opencontainers/runc/releases/download/${VERSION}/runc.amd64
+sudo install -m 755 runc.amd64 /usr/local/sbin/runc
+```
+
+## Basic Usage
+
+### 1. Create a container from a bundle
+
+A **bundle** is a directory with a root filesystem and config.json.
+
+#### Prepare a rootfs
+
+```bash
+mkdir -p ~/mycontainer/rootfs
+cd ~/mycontainer
+# For example, use busybox rootfs
+docker export $(docker create busybox) | tar -C rootfs -xvf -
+```
+
+#### Generate a config.json (OCI format)
+
+```bash
+runc spec
+```
+
+#### Edit config.json as needed
+
+### 2. Run the container
+
+```bash
+sudo runc run mycontainerid
+```
+
+or in detached mode:
+
+```bash
+sudo runc run -d mycontainerid
+```
+
+### 3. List containers
+
+```bash
+sudo runc list
+```
+
+### 4. Execute a command inside the container
+
+```bash
+sudo runc exec -t mycontainerid /bin/sh
+```
+
+### 5. Kill/stop/delete container
+
+```bash
+sudo runc kill mycontainerid
+sudo runc delete mycontainerid
+```
+
+---
+
+# 3. **crictl**
+
+**crictl** is a CLI tool to interact with **CRI**-compatible container runtimes (like containerd and CRI-O). It is a must-have for Kubernetes troubleshooting!
+
+## Installation
+
+```bash
+VERSION="v1.30.0" # Use latest release
+curl -LO https://github.com/kubernetes/cri-tools/releases/download/${VERSION}/crictl-${VERSION}-linux-amd64.tar.gz
+sudo tar -C /usr/local/bin -xzf crictl-${VERSION}-linux-amd64.tar.gz
+```
+
+#### (Optional) Create crictl config file:
+
+```bash
+cat <<EOF | sudo tee /etc/crictl.yaml
+runtime-endpoint: unix:///run/containerd/containerd.sock
+EOF
+```
+
+## Basic Usage
+
+### 1. Check version
+
+```bash
+crictl --version
+```
+
+### 2. List pods and containers
+
+```bash
+sudo crictl pods
+sudo crictl ps -a
+```
+
+### 3. Pull an image
+
+```bash
+sudo crictl pull nginx:latest
+```
+
+### 4. List images
+
+```bash
+sudo crictl images
+```
+
+### 5. Create a pod (from YAML/JSON)
+
+```bash
+sudo crictl runp pod-config.json
+```
+
+### 6. Create and run a container
+
+```bash
+sudo crictl create <POD_ID> container-config.json pod-config.json
+sudo crictl start <CONTAINER_ID>
+```
+
+### 7. Exec into a container
+
+```bash
+sudo crictl exec -it <CONTAINER_ID> /bin/sh
+```
+
+### 8. Stop/Remove containers and pods
+
+```bash
+sudo crictl stop <CONTAINER_ID>
+sudo crictl rm <CONTAINER_ID>
+sudo crictl stopp <POD_ID>
+sudo crictl rmp <POD_ID>
+```
+
+---
+
+# 4. **DevOps Tips & Toolbox Commands**
+
+* Use `containerd` and `crictl` for Kubernetes cluster troubleshooting (e.g., list pods/containers, logs).
+* Use `runc` for debugging at the lowest level (run/init containers outside Kubernetes/Docker for deep inspection).
+* `ctr` is powerful but not as user-friendly as Docker CLI; use for advanced workflows, custom automation.
+* Always check logs:
+
+  * `journalctl -u containerd`
+  * `sudo ctr events`
+  * `sudo crictl logs <CONTAINER_ID>`
+
+---
+
+# 5. **Cheat Sheet Summary**
+
+| Tool           | Install   | List Images       | Run Container         | Exec Shell             | Remove Container    |
+| -------------- | --------- | ----------------- | --------------------- | ---------------------- | ------------------- |
+| containerd/ctr | see above | `ctr images list` | `ctr run ...`         | (via `ctr tasks exec`) | `ctr containers rm` |
+| runc           | see above | -                 | `runc run ...`        | `runc exec ...`        | `runc delete ...`   |
+| crictl         | see above | `crictl images`   | `crictl create/start` | `crictl exec -it ...`  | `crictl rm ...`     |
+
+---
+
+# 6. **Further Reading**
+
+* [containerd Documentation](https://containerd.io/docs/)
+* [runc Documentation](https://github.com/opencontainers/runc)
+* [crictl GitHub](https://github.com/kubernetes/cri-tools)
+
+---
