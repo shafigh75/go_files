@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Chat Assistant</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css">
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f5f7fa;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }
+        .chat-container {
+            width: 100%;
+            max-width: 800px;
+            background-color: white;
+            border-radius: 10px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            display: flex;
+            flex-direction: column;
+            height: 90vh;
+            overflow: hidden;
+        }
+        .chat-header {
+            background-color: #4a6cf7;
+            color: white;
+            padding: 15px 20px;
+            border-top-left-radius: 10px;
+            border-top-right-radius: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .chat-header h1 {
+            margin: 0;
+            font-size: 1.5rem;
+        }
+        .chat-controls {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        .toggle-container {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .toggle-switch {
+            position: relative;
+            display: inline-block;
+            width: 50px;
+            height: 24px;
+        }
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #ccc;
+            transition: .4s;
+            border-radius: 24px;
+        }
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 16px;
+            width: 16px;
+            left: 4px;
+            bottom: 4px;
+            background-color: white;
+            transition: .4s;
+            border-radius: 50%;
+        }
+        input:checked + .slider {
+            background-color: #4a6cf7;
+        }
+        input:checked + .slider:before {
+            transform: translateX(26px);
+        }
+        .clear-btn {
+            background-color: #ff5252;
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.9rem;
+        }
+        .clear-btn:hover {
+            background-color: #e04040;
+        }
+        .chat-messages {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+        .message {
+            max-width: 80%;
+            padding: 12px 16px;
+            border-radius: 18px;
+            line-height: 1.4;
+            word-wrap: break-word;
+        }
+        .user-message {
+            background-color: #e3f2fd;
+            align-self: flex-end;
+            border-bottom-right-radius: 4px;
+        }
+        .assistant-message {
+            background-color: #f1f1f1;
+            align-self: flex-start;
+            border-bottom-left-radius: 4px;
+        }
+        /* Markdown styling */
+        .assistant-message h1, .assistant-message h2, .assistant-message h3 {
+            margin-top: 0.5em;
+            margin-bottom: 0.3em;
+        }
+        .assistant-message p {
+            margin-top: 0.5em;
+            margin-bottom: 0.5em;
+        }
+        .assistant-message ul, .assistant-message ol {
+            margin-top: 0.5em;
+            margin-bottom: 0.5em;
+            padding-left: 1.5em;
+        }
+        .assistant-message li {
+            margin-bottom: 0.2em;
+        }
+        .assistant-message blockquote {
+            border-left: 4px solid #ddd;
+            padding-left: 1em;
+            margin: 0.5em 0;
+            color: #666;
+        }
+        .assistant-message code {
+            background-color: rgba(0,0,0,0.05);
+            padding: 0.2em 0.4em;
+            border-radius: 3px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 0.9em;
+        }
+        .assistant-message pre {
+            background-color: #f6f8fa;
+            border-radius: 5px;
+            padding: 1em;
+            overflow-x: auto;
+            margin: 0.5em 0;
+        }
+        .assistant-message pre code {
+            background-color: transparent;
+            padding: 0;
+        }
+        .assistant-message table {
+            border-collapse: collapse;
+            width: 100%;
+            margin: 0.5em 0;
+        }
+        .assistant-message th, .assistant-message td {
+            border: 1px solid #ddd;
+            padding: 0.5em;
+            text-align: left;
+        }
+        .assistant-message th {
+            background-color: #f6f8fa;
+        }
+        .assistant-message a {
+            color: #4a6cf7;
+            text-decoration: none;
+        }
+        .assistant-message a:hover {
+            text-decoration: underline;
+        }
+        .chat-input-container {
+            padding: 15px 20px;
+            border-top: 1px solid #eee;
+            display: flex;
+            gap: 10px;
+        }
+        .chat-input {
+            flex: 1;
+            padding: 12px 16px;
+            border: 1px solid #ddd;
+            border-radius: 24px;
+            font-size: 1rem;
+            outline: none;
+            transition: border-color 0.3s;
+        }
+        .chat-input:focus {
+            border-color: #4a6cf7;
+        }
+        .send-btn {
+            background-color: #4a6cf7;
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 48px;
+            height: 48px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        .send-btn:hover {
+            background-color: #3a5bd9;
+        }
+        .send-btn svg {
+            width: 24px;
+            height: 24px;
+        }
+        .thinking-indicator {
+            font-style: italic;
+            color: #888;
+            margin-top: 5px;
+            display: none;
+        }
+        .typing-indicator {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            padding: 8px 16px;
+            background-color: #f1f1f1;
+            border-radius: 18px;
+            max-width: 80px;
+            margin-bottom: 15px;
+        }
+        .typing-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: #888;
+            animation: typing 1.4s infinite;
+        }
+        .typing-dot:nth-child(2) {
+            animation-delay: 0.2s;
+        }
+        .typing-dot:nth-child(3) {
+            animation-delay: 0.4s;
+        }
+        @keyframes typing {
+            0%, 60%, 100% {
+                transform: translateY(0);
+            }
+            30% {
+                transform: translateY(-10px);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="chat-container">
+        <div class="chat-header">
+            <h1>AI Assistant</h1>
+            <div class="chat-controls">
+                <div class="toggle-container">
+                    <span>Thinking Mode</span>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="thinking-toggle" checked>
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                <button class="clear-btn" id="clear-btn">Clear Chat</button>
+            </div>
+        </div>
+        <div class="chat-messages" id="chat-messages">
+            <div class="message assistant-message">
+                Hello! I'm your AI assistant. How can I help you today?
+            </div>
+        </div>
+        <div class="chat-input-container">
+            <input type="text" class="chat-input" id="chat-input" placeholder="Type your message here...">
+            <button class="send-btn" id="send-btn">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="22" y1="2" x2="11" y2="13"></line>
+                    <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                </svg>
+            </button>
+        </div>
+    </div>
+
+    <!-- Include marked for Markdown parsing and highlight.js for code highlighting -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const chatMessages = document.getElementById('chat-messages');
+            const chatInput = document.getElementById('chat-input');
+            const sendBtn = document.getElementById('send-btn');
+            const thinkingToggle = document.getElementById('thinking-toggle');
+            const clearBtn = document.getElementById('clear-btn');
+
+            // Configure marked for better rendering
+            marked.setOptions({
+                highlight: function(code, lang) {
+                    if (lang && hljs.getLanguage(lang)) {
+                        try {
+                            return hljs.highlight(code, { language: lang }).value;
+                        } catch (err) {}
+                    }
+                    return hljs.highlightAuto(code).value;
+                },
+                breaks: true,
+                gfm: true
+            });
+
+            // Generate a simple user ID for this session
+            const userId = 'user_' + Math.random().toString(36).substring(2, 9);
+
+            // Function to add a message to the chat
+            function addMessage(content, isUser) {
+                const messageDiv = document.createElement('div');
+                messageDiv.classList.add('message');
+                messageDiv.classList.add(isUser ? 'user-message' : 'assistant-message');
+
+                if (isUser) {
+                    // User messages are plain text
+                    messageDiv.textContent = content;
+                } else {
+                    // Assistant messages are rendered as Markdown
+                    messageDiv.innerHTML = marked.parse(content);
+                    // Highlight code blocks
+                    messageDiv.querySelectorAll('pre code').forEach((block) => {
+                        hljs.highlightElement(block);
+                    });
+                }
+
+                chatMessages.appendChild(messageDiv);
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+            }
+
+            // Function to show typing indicator
+            function showTypingIndicator() {
+                const indicator = document.createElement('div');
+                indicator.classList.add('typing-indicator');
+                indicator.id = 'typing-indicator';
+
+                for (let i = 0; i < 3; i++) {
+                    const dot = document.createElement('div');
+                    dot.classList.add('typing-dot');
+                    indicator.appendChild(dot);
+                }
+
+                chatMessages.appendChild(indicator);
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+            }
+
+            // Function to remove typing indicator
+            function removeTypingIndicator() {
+                const indicator = document.getElementById('typing-indicator');
+                if (indicator) {
+                    indicator.remove();
+                }
+            }
+
+            // Function to send a message using POST request with streaming
+            function sendMessage() {
+                const message = chatInput.value.trim();
+                if (message === '') return;
+
+                // Add user message to chat
+                addMessage(message, true);
+                chatInput.value = '';
+
+                // Show typing indicator
+                showTypingIndicator();
+
+                // Create a new assistant message container
+                const assistantMessage = document.createElement('div');
+                assistantMessage.classList.add('message', 'assistant-message');
+                chatMessages.appendChild(assistantMessage);
+
+                // Get thinking mode state
+                const thinkingMode = thinkingToggle.checked;
+
+                // Variable to accumulate the full response
+                let fullResponse = '';
+
+                // Send POST request to server with streaming
+                fetch('/chat', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        user_id: userId,
+                        message: message,
+                        thinking_mode: thinkingMode
+                    })
+                })
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('Network response was not ok');
+                    }
+
+                    const reader = response.body.getReader();
+                    const decoder = new TextDecoder();
+                    let buffer = '';
+
+                    function processStream() {
+                        return reader.read().then(({ done, value }) => {
+                            if (done) {
+                                removeTypingIndicator();
+                                return;
+                            }
+
+                            // Decode the chunk and add to buffer
+                            buffer += decoder.decode(value, { stream: true });
+
+                            // Split by newlines and process complete lines
+                            const lines = buffer.split('\n');
+                            buffer = lines.pop(); // Keep the last incomplete line in the buffer
+
+                            // Process each line
+                            lines.forEach(line => {
+                                if (line.startsWith('data: ')) {
+                                    try {
+                                        const data = JSON.parse(line.slice(6));
+                                        if (data.content) {
+                                            // Append new content to the full response
+                                            fullResponse += data.content;
+
+                                            // Render the full accumulated response as Markdown
+                                            assistantMessage.innerHTML = marked.parse(fullResponse);
+
+                                            // Highlight code blocks
+                                            assistantMessage.querySelectorAll('pre code').forEach((block) => {
+                                                hljs.highlightElement(block);
+                                            });
+
+                                            // Scroll to bottom
+                                            chatMessages.scrollTop = chatMessages.scrollHeight;
+                                        }
+                                    } catch (e) {
+                                        console.error('Error parsing SSE data:', e);
+                                    }
+                                }
+                            });
+
+                            return processStream();
+                        });
+                    }
+
+                    return processStream();
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    removeTypingIndicator();
+                    assistantMessage.textContent = "Error: Could not get response from server.";
+                });
+            }
+
+            // Event listeners
+            sendBtn.addEventListener('click', sendMessage);
+            chatInput.addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    sendMessage();
+                }
+            });
+
+            clearBtn.addEventListener('click', function() {
+                fetch('/clear', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ user_id: userId })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        chatMessages.innerHTML = '<div class="message assistant-message">Hello! I\'m your AI assistant. How can I help you today?</div>';
+                    }
+                })
+                .catch(error => {
+                    console.error('Error clearing chat:', error);
+                });
+            });
+        });
+    </script>
+</body>
+</html>
