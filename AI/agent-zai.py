@@ -131,21 +131,14 @@ class ZAIModel:
 
         return response.json()
 
-    def generate(self, system_prompt, messages, tools=None):
+    def generate(self, system_prompt, user_message, tools=None):
         # Format messages for ZAI
-        formatted_messages = [{"role": "system", "content": system_prompt}]
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message}
+        ]
 
-        # Add conversation history
-        for msg in messages:
-            formatted_messages.append({"role": "user", "content": msg})
-
-        # If tools are provided, we need to handle them differently
-        if tools:
-            # For simplicity, we'll include tool information in the system prompt
-            tool_descriptions = "\n".join([f"{tool.name}: {tool.description}" for tool in tools])
-            formatted_messages[0]["content"] += f"\n\nAvailable tools:\n{tool_descriptions}"
-
-        response = self.chat_completions_create(formatted_messages)
+        response = self.chat_completions_create(messages)
 
         # Extract the content from the response
         if "choices" in response and len(response["choices"]) > 0:
@@ -154,7 +147,44 @@ class ZAIModel:
             raise Exception("Invalid response from ZAI API")
 
 # -----------------------------
-# 7. Initialize ZAI agent
+# 7. Tool Decision Function
+# -----------------------------
+def decide_tool(query, tools_info):
+    """
+    Use the model to decide which tool to use based on the query
+    """
+    system_prompt = f"""
+    You are a tool selection assistant. Your job is to decide which tool to use for a given user query.
+
+    Available tools:
+    {tools_info}
+
+    For the user query, decide which tool to use or if no tool is needed.
+    Respond with just the tool name or "none" if no tool is needed.
+    """
+
+    # Create a temporary model instance for tool decision
+    temp_model = ZAIModel(api_key="ebb378fb1657450583f64e6d0e94636b.5c66cIYnwtcNRNRL")
+
+    # Get the decision from the model
+    decision = temp_model.generate(
+        system_prompt=system_prompt,
+        user_message=query
+    ).strip().lower()
+
+    # Extract the tool name from the decision
+    if decision == "none":
+        return None
+
+    # Check if the decision matches any tool name
+    for tool_name in [tool.split(":")[0].strip() for tool in tools_info.split("\n")]:
+        if tool_name.lower() in decision:
+            return tool_name
+
+    return None
+
+# -----------------------------
+# 8. Initialize ZAI agent
 # -----------------------------
 zai_model = ZAIModel(api_key="ebb378fb1657450583f64e6d0e94636b.5c66cIYnwtcNRNRL")
 
@@ -165,31 +195,34 @@ class ZAIAgent:
         self.tools = tools or {}
         self.tool_functions = {tool.name: tool.function for tool in tools} if tools else {}
 
+        # Prepare tools information for decision making
+        self.tools_info = "\n".join([f"{tool.name}: {tool.description}" for tool in tools]) if tools else ""
+
     def run_sync(self, query):
-        # First, check if we should use a tool
+        # First, decide which tool to use
+        tool_to_use = decide_tool(query, self.tools_info)
+
         tool_result = None
         tool_used = ""
 
-        # Improved tool detection
-        # Check for order-related queries
-        order_match = re.search(r'order\s*(\d+)', query.lower())
-        if order_match:
-            order_id = order_match.group(1)
-            if "check_order" in self.tool_functions:
-                tool_result = self.tool_functions["check_order"](order_id)
-                tool_used = "check_order"
-        # Check for FAQ-related queries
-        elif any(keyword in query.lower() for keyword in ["shipping", "return", "policy", "faq", "discount", "کد تخفیف"]):
-            if "rag_faq" in self.tool_functions:
-                tool_result = self.tool_functions["rag_faq"](query)
-                tool_used = "rag_faq"
+        # If a tool is selected, execute it
+        if tool_to_use and tool_to_use in self.tool_functions:
+            if tool_to_use == "check_order":
+                # Extract order ID using regex
+                order_match = re.search(r'order\s*(\d+)', query.lower())
+                if order_match:
+                    order_id = order_match.group(1)
+                    tool_result = self.tool_functions[tool_to_use](order_id)
+                    tool_used = tool_to_use
+            elif tool_to_use == "rag_faq":
+                # Always use the vector database for FAQ queries
+                tool_result = self.tool_functions[tool_to_use](query)
+                tool_used = tool_to_use
 
         # If we used a tool, incorporate the result
         if tool_result:
-            # Create a prompt that includes the tool result
-            enhanced_prompt = f"""
-            {self.system_prompt}
-
+            # Create a user message that includes the tool result
+            user_message = f"""
             User query: {query}
 
             Information from {tool_used} tool: {tool_result}
@@ -197,18 +230,16 @@ class ZAIAgent:
             Please provide a helpful response based on this information.
             """
 
-            # Generate response using ZAI with the enhanced prompt
+            # Generate response using ZAI with the enhanced user message
             response = self.model.generate(
-                system_prompt="",  # System prompt is included in the user message
-                messages=[enhanced_prompt],
-                tools=self.tools
+                system_prompt=self.system_prompt,
+                user_message=user_message
             )
         else:
             # No tool used, just generate a response
             response = self.model.generate(
                 system_prompt=self.system_prompt,
-                messages=[query],
-                tools=self.tools
+                user_message=query
             )
 
         # Create a result object similar to Pydantic AI's result
@@ -235,14 +266,14 @@ agent = ZAIAgent(
         ),
         Tool(
             name="rag_faq",
-            description="Fetch top FAQ answers from company knowledge base",
+            description="Fetch top FAQ answers from company knowledge base using vector similarity search",
             function=rag_faq
         )
     ]
 )
 
 # -----------------------------
-# 8. Test queries
+# 9. Test queries
 # -----------------------------
 test_queries = [
     "Can you tell me the status of order 456?",
@@ -251,6 +282,12 @@ test_queries = [
     "What shipping options do you offer?",
     "can i update my shipping address?",
     "آیا شما کد تخفیف هم دارید؟",
+    # Additional test queries to verify vector database usage
+    "How do I track my order?",
+    "What payment methods do you accept?",
+    "Do you offer warranty on your products?",
+    "Can I return a damaged item?",
+    "How long does shipping take?"
 ]
 
 for query in test_queries:
