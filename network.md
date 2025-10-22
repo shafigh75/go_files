@@ -445,3 +445,313 @@ sudo resize2fs /dev/bareos-vg/bareos-lv
 You're now using `/mnt/bareos` backed by LVM, ready for easy expansion as needed.
 
 
+
+
+---
+
+
+# GRE over IPSec:
+
+Implementing GRE over IPSec on Ubuntu Server is a common and powerful way to create a secure site-to-site VPN. We'll use `strongSwan` for the IPSec part and the built-in kernel `gre` module for the tunnel.
+
+Here is a complete, step-by-step guide.
+
+### **Scenario**
+
+We will connect two office networks over the internet.
+
+*   **Site A (Server A):**
+    *   Public IP (WAN): `203.0.113.10`
+    *   Private LAN: `192.168.10.0/24`
+    *   GRE Tunnel IP: `10.0.0.1`
+
+*   **Site B (Server B):**
+    *   Public IP (WAN): `198.51.100.20`
+    *   Private LAN: `192.168.20.0/24`
+    *   GRE Tunnel IP: `10.0.0.2`
+
+*   **Pre-Shared Key (PSK):** `MySecretVPNKey` (Use a strong, random key in production!)
+
+---
+
+### **Phase 1: Prerequisites on Both Servers**
+
+Run these commands on **both Server A and Server B**.
+
+1.  **Update System and Install strongSwan:**
+    ```bash
+    sudo apt update
+    sudo apt install strongswan -y
+    ```
+
+2.  **Enable IP Forwarding:**
+    This allows the server to act as a router, forwarding packets between its interfaces.
+    ```bash
+    sudo sysctl -w net.ipv4.ip_forward=1
+    ```
+    To make this permanent, edit the sysctl configuration file:
+    ```bash
+    sudo nano /etc/sysctl.conf
+    ```
+    Uncomment or add the following line:
+    ```
+    net.ipv4.ip_forward=1
+    ```
+    Save the file (`Ctrl+X`, then `Y`, then `Enter`).
+
+3.  **Configure Firewall (UFW):**
+    IPSec uses specific ports and protocols. We need to allow them.
+    ```bash
+    # Allow SSH (so you don't lock yourself out)
+    sudo ufw allow OpenSSH
+
+    # Allow IPSec traffic
+    sudo ufw allow 500/udp
+    sudo ufw allow 4500/udp
+    
+    # The ESP protocol is crucial for IPSec
+    sudo ufw allow ESP
+    
+    # Enable the firewall
+    sudo ufw enable
+    ```
+
+---
+
+### **Phase 2: Configuration on Server A**
+
+Edit the configuration files on **Server A (203.0.113.10)**.
+
+1.  **Configure IPSec (`/etc/ipsec.conf`):**
+    ```bash
+    sudo nano /etc/ipsec.conf
+    ```
+    Clear the file and add the following content. This sets up a "transport mode" tunnel, which is what we use for GRE over IPSec.
+
+    ```ini
+    config setup
+        charondebug="all" # Use for debugging, set to "none" in production
+        uniqueids=yes
+
+    conn %default
+        keyexchange=ikev2
+        authby=secret
+        type=transport # IMPORTANT: Transport mode encrypts only the payload
+        left=%any
+        leftid=203.0.113.10
+        leftprotoport=17/0 # UDP protocol for GRE
+        right=%any
+        rightid=198.51.100.20
+        rightprotoport=17/0 # UDP protocol for GRE
+        ike=aes256-sha1-modp2048!
+        esp=aes256-sha1!
+        auto=add # Load this connection on startup
+
+    conn site-a-to-site-b
+        left=203.0.113.10
+        right=198.51.100.20
+    ```
+
+2.  **Set the Pre-Shared Key (`/etc/ipsec.secrets`):**
+    ```bash
+    sudo nano /etc/ipsec.secrets
+    ```
+    Add this line, replacing the IPs and key with your own:
+    ```
+    203.0.113.10 198.51.100.20 : PSK "MySecretVPNKey"
+    ```
+
+3.  **Create the GRE Tunnel:**
+    ```bash
+    # Create the tunnel interface
+    sudo ip tunnel add gre0 mode gre remote 198.51.100.20 local 203.0.113.10 ttl 255
+
+    # Bring the interface up
+    sudo ip link set gre0 up
+
+    # Assign the tunnel IP address
+    sudo ip addr add 10.0.0.1/30 dev gre0
+    ```
+
+4.  **Start and Enable strongSwan:**
+    ```bash
+    sudo systemctl restart strongswan-starter
+    sudo systemctl enable strongswan-starter
+    ```
+
+5.  **Bring the IPSec Tunnel Up:**
+    ```bash
+    sudo ipsec up site-a-to-site-b
+    ```
+
+---
+
+### **Phase 3: Configuration on Server B**
+
+Now, do the mirror configuration on **Server B (198.51.100.20)**.
+
+1.  **Configure IPSec (`/etc/ipsec.conf`):**
+    ```bash
+    sudo nano /etc/ipsec.conf
+    ```
+    Add the following content. Notice that `left` and `right` are swapped.
+    ```ini
+    config setup
+        charondebug="all" # Use for debugging, set to "none" in production
+        uniqueids=yes
+
+    conn %default
+        keyexchange=ikev2
+        authby=secret
+        type=transport # IMPORTANT: Transport mode encrypts only the payload
+        left=%any
+        leftid=198.51.100.20
+        leftprotoport=17/0
+        right=%any
+        rightid=203.0.113.10
+        rightprotoport=17/0
+        ike=aes256-sha1-modp2048!
+        esp=aes256-sha1!
+        auto=add
+
+    conn site-a-to-site-b
+        left=198.51.100.20
+        right=203.0.113.10
+    ```
+
+2.  **Set the Pre-Shared Key (`/etc/ipsec.secrets`):**
+    ```bash
+    sudo nano /etc/ipsec.secrets
+    ```
+    Add the line (the key must be identical):
+    ```
+    198.51.100.20 203.0.113.10 : PSK "MySecretVPNKey"
+    ```
+
+3.  **Create the GRE Tunnel:**
+    ```bash
+    # Create the tunnel interface
+    sudo ip tunnel add gre0 mode gre remote 203.0.113.10 local 198.51.100.20 ttl 255
+
+    # Bring the interface up
+    sudo ip link set gre0 up
+
+    # Assign the tunnel IP address
+    sudo ip addr add 10.0.0.2/30 dev gre0
+    ```
+
+4.  **Start and Enable strongSwan:**
+    ```bash
+    sudo systemctl restart strongswan-starter
+    sudo systemctl enable strongswan-starter
+    ```
+
+5.  **Bring the IPSec Tunnel Up:**
+    ```bash
+    sudo ipsec up site-a-to-site-b
+    ```
+
+---
+
+### **Phase 4: Verification and Routing**
+
+Now, let's test if the tunnel is working and add the routes for the private networks.
+
+1.  **Verify IPSec Status (on either server):**
+    ```bash
+    sudo ipsec status
+    ```
+    You should see output like this, showing the connection is `ESTABLISHED`:
+    ```
+    Security Associations (1 up, 0 connecting):
+    site-a-to-site-b[1]: ESTABLISHED 17 seconds ago, 203.0.113.10[203.0.113.10]...198.51.100.20[198.51.100.20]
+    ```
+
+2.  **Verify GRE Tunnel (from Server A):**
+    ```bash
+    ping 10.0.0.2
+    ```
+    You should get a successful reply. This confirms the GRE tunnel is up and running. If this fails, the IPSec tunnel is likely the problem.
+
+3.  **Add Routes for Private Networks:**
+    The tunnel is up, but the servers don't know to send traffic for the remote LAN through it.
+
+    **On Server A:**
+    ```bash
+    sudo ip route add 192.168.20.0/24 via 10.0.0.2 dev gre0
+    ```
+
+    **On Server B:**
+    ```bash
+    sudo ip route add 192.168.10.0/24 via 10.0.0.1 dev gre0
+    ```
+
+4.  **Final Test:**
+    From a machine on the `192.168.10.0/24` network, try to ping a machine on the `192.168.20.0/24` network. Or, from Server A, ping the private IP of Server B's LAN interface (if it has one).
+    ```bash
+    # From Server A
+    ping 192.168.20.1
+    ```
+
+---
+
+### **Phase 5: Making it Permanent (Netplan)**
+
+The GRE tunnel and routes will disappear on reboot. We'll use `netplan` to make them permanent.
+
+1.  **Find your netplan config file:**
+    ```bash
+    ls /etc/netplan/
+    ```
+    It will be named something like `01-netcfg.yaml` or `50-cloud-init.yaml`.
+
+2.  **Edit the file on Server A:**
+    ```bash
+    sudo nano /etc/netplan/01-netcfg.yaml
+    ```
+    Add a `tunnels` section and a `routes` section. **Be careful with YAML indentation!**
+
+    ```yaml
+    network:
+      version: 2
+      # ... your existing eth0 or enp0s3 config ...
+      tunnels:
+        gre0:
+          mode: gre
+          local: 203.0.113.10
+          remote: 198.51.100.20
+          addresses: [10.0.0.1/30]
+          ttl: 255
+      routes:
+        - to: 192.168.20.0/24
+          via: 10.0.0.2
+    ```
+
+3.  **Edit the file on Server B:**
+    ```bash
+    sudo nano /etc/netplan/01-netcfg.yaml
+    ```
+    Add the corresponding configuration:
+
+    ```yaml
+    network:
+      version: 2
+      # ... your existing eth0 or enp0s3 config ...
+      tunnels:
+        gre0:
+          mode: gre
+          local: 198.51.100.20
+          remote: 203.0.113.10
+          addresses: [10.0.0.2/30]
+          ttl: 255
+      routes:
+        - to: 192.168.10.0/24
+          via: 10.0.0.1
+    ```
+
+4.  **Apply the Netplan Configuration on Both Servers:**
+    ```bash
+    sudo netplan apply
+    ```
+
+Your GRE over IPSec tunnel is now fully configured and will automatically come up on boot.
