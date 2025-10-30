@@ -755,3 +755,224 @@ The GRE tunnel and routes will disappear on reboot. We'll use `netplan` to make 
     ```
 
 Your GRE over IPSec tunnel is now fully configured and will automatically come up on boot.
+
+
+
+---
+
+# freeIPA 
+
+Below is a **complete, copy-paste-ready run-book** that takes you from **zero servers** to the **same enterprise-grade DevOps workflow** we described:  
+centralized auth, sudo, 2FA, cert life-cycle, AD trust, and **Ansible-driven** host onboarding.
+
+Time needed: **≈ 1 day** (most of it unattended install).
+
+---
+
+### 1. Design & prerequisites
+
+| Item | Value |
+|------|-------|
+| **Linux dist** | RHEL 9 / Alma 9 / Oracle 9 (works on Ubuntu 22, commands differ slightly) |
+| **IPA realm** | `EXAMPLE.CORP` |
+| **IPA domain** | `ipa.example.corp` |
+| **Servers** | 3 × VM (2 vCPU, 4 GB) for IPA replicas; N × client VMs |
+| **DNS** | IPA runs **integrated BIND** (easiest); or delegate zone from corporate DNS |
+| **Firewall** | open **80, 443, 88, 464, 389, 636, 123 udp, 53 tcp/udp** |
+| **AD trust** (optional) | Windows 2016+ functional level; network reachability to AD DCs |
+
+---
+
+### 2. Build the first IPA server (30 min interactive)
+
+```bash
+# 1.1  OS prep
+sudo dnf update -y
+sudo hostnamectl set-hostname ipa1.example.corp
+echo "192.168.10.11 ipa1.example.corp ipa1" | sudo tee -a /etc/hosts
+
+# 1.2  install + firewalld
+sudo dnf install -y @idm:DL1 ipa-server ipa-server-dns
+sudo systemctl enable --now firewalld
+sudo firewall-cmd --permanent --add-service=freeipa-4
+sudo firewall-cmd --reload
+
+# 1.3  run the installer
+sudo ipa-server-install --setup-dns --auto-forwarders \
+  --realm EXAMPLE.CORP --domain ipa.example.corp \
+  --auto-reverse --mkhomedir --no-ntp
+# supply passwords for Directory Manager and admin
+# answer YES at the end
+```
+
+**Result**:  
+Kerberos KDC, LDAP, Dogtag CA, BIND, OCSP, CRL, NTP all running on one box.
+
+---
+
+### 3. Add two replicas (high-availability)
+
+```bash
+# on replica candidate (ipa2.example.corp)
+sudo dnf install -y @idm:DL1 ipa-server
+sudo ipa-replica-install --setup-dns --auto-forwarders \
+  --auto-reverse --mkhomedir --principal admin@EXAMPLE.CORP
+# enter admin password; installer copies data from ipa1
+```
+
+Repeat for **ipa3**.  
+You now have **3-way multi-master** for LDAP, Kerberos, CA.
+
+---
+
+### 4. Create the DevOps **identity scaffold** (5 min)
+
+```bash
+kinit admin   # obtain admin ticket (24 h)
+
+# 4.1  POSIX groups
+ipa group-add --desc='All developers' dev
+ipa group-add --desc='App1 product' app1
+ipa group-add --desc='App2 product' app2
+ipa group-add --desc='Can sudo everything' ops
+
+# 4.2  HBAC rule: only dev may SSH to staging
+ipa hbacrule-add --desc='Dev staging access' dev-staging
+ipa hbacrule-add-user --users=dev dev-staging
+ipa hbacrule-add-host --hostgroups=staging dev-staging
+ipa hbacrule-add-service --hbacsvcs=sshd dev-staging
+
+# 4.3  sudo rules (stored in LDAP, pushed by SSSD)
+ipa sudorule-add --desc='App1 can restart service' app1-restart
+ipa sudorule-add-user --groups=app1 app1-restart
+ipa sudorule-add-host --hostgroups=app1-servers app1-restart
+ipa sudorule-add-allow-command --sudocmds='/usr/bin/systemctl restart *' app1-restart
+
+# 4.4  enable 2FA (OTP) for prod
+ipa config-mod --user-auth-type=otp --user-auth-type=password
+ipa hbacrule-add prod-otp-only
+ipa hbacrule-add-user --groups=ops prod-otp-only
+ipa hbacrule-add-host --hostgroups=prod prod-otp-only
+ipa hbacrule-add-service --hbacsvcs=sshd prod-otp-only
+```
+
+---
+
+### 5. Add users & tokens (GUI or CLI)
+
+```bash
+ipa user-add alice --first=Alice --last=Lee --email=alice@corp.com --password
+ipa group-add-member dev --users=alice
+ipa otptoken-add alice   # prints QR code for Google-Auth
+```
+
+Alice now runs:
+```bash
+kinit alice   # prompted for password + OTP
+ssh app1-staging01   # ticket forwarded, no password again
+```
+
+---
+
+### 6. Optional – **one-way trust** to corporate AD
+
+```bash
+# on IPA master (network reachability to AD DCs)
+ipa trust-add --type=ad CORP.EXAMPLE.COM \
+  --admin adadmin --password
+# enter AD domain-admin password
+# IPA automatically creates cross-realm Kerberos trust
+```
+
+Windows users can now:
+```
+ssh -K alice@corp.example.com@ipa-host01
+```
+using **same password**, **no password sync**.
+
+---
+
+### 7. Client enrolment – **Ansible-as-code**
+
+Create role `ipa-client` (excerpt):
+
+```yaml
+---
+- name: install IPA client packages
+  yum: name=ipa-client state=present
+
+- name: enrol host to IPA
+  command: |
+    ipa-client-install --unattended --mkhomedir \
+      --server ipa1.example.corp --domain ipa.example.corp \
+      --realm EXAMPLE.CORP --principal enrollment@EXAMPLE.CORP \
+      --password {{ vault_enrollment_otp }} --force-join
+  register: out
+  changed_when: "'Client configuration complete' in out.stdout"
+
+- name: allow sssd to create home dirs
+  lineinfile: path=/etc/pam.d/system-auth
+              regexp='^session.*optional.*pam_mkhomedir'
+              line='session optional pam_mkhomedir.so umask=0077'
+```
+
+Playbook used by **GitLab-CI**:
+
+```yaml
+# .gitlab-ci.yml snippet
+provision-vm:
+  script:
+    - ansible-playbook -i aws_ec2.yml site.yml --tags ipa-client
+```
+
+**Result**: VM boots → pipeline enrolls it → HBAC & sudo rules **immediately active**.
+
+---
+
+### 8. Certificates for micro-services – **auto-renew**
+
+```bash
+# on host
+ipa service-add HTTP/web-shop@EXAMPLE.CORP
+# certmonger tracks the cert
+ipa-getcert request -r -f /etc/pki/tls/certs/web-shop.crt \
+                    -k /etc/pki/tls/private/web-shop.key \
+                    -K HTTP/web-shop@EXAMPLE.CORP
+```
+
+Dogtag CA issues **90-day cert**; **certmonger renews at 60 days**, **reloads nginx** via hook.
+
+---
+
+### 9. Day-2 ops cheat-sheet
+
+| Task | Command |
+|------|---------|
+| **List active tickets** | `klist` |
+| **Disable user instantly** | `ipa user-disable bob` |
+| **Extend prod access** | `ipa hbacrule-add-user prod-otp-only --users=alice && at now + 4 hours` |
+| **Audit log** | `journalctl -u sssd --since "1 hour ago"` or `/var/log/krb5kdc.log` |
+| **Promote new replica** | `ipa-replica-install on new VM` |
+| **Backup IPA** | `ipa-backup --data --logs` (online, no downtime) |
+
+---
+
+### 10. Security hardening quick wins
+- `ipa config-mod --user-auth-type=otp --user-auth-type=password`  
+- `ipa pwpolicy-mod --minlength=14 --maxfail=5 --lockouttime=300`  
+- Disable anonymous LDAP: `ldapmodify … nsslapd-allow-anonymous-access=never`  
+- Enable **TLS 1.3 only** in `/etc/crypto-policies/config` → `update-crypto-policies --set FUTURE`  
+
+---
+
+### 🎉 Outcome
+Follow the 10 steps above and you have:
+
+✅ **Single identity** across 3 000+ Linux boxes  
+✅ **SSH + sudo** managed from Git, not `/etc/passwd`  
+✅ **2FA/OTP** on production, **Kerberos SSO** everywhere else  
+✅ **AD trust** – Windows users keep one password  
+✅ **Zero-touch** VM enrolment via Ansible  
+✅ **Short-lived certs** auto-issued & renewed  
+
+Copy, paste, adjust names, and you’ll reproduce the **enterprise DevOps workflow** in your own lab or data-centre.
