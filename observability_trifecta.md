@@ -3,6 +3,7 @@
 * [Part 1](#part-1)  basic definitions and example
 * [Part 2](#part-2)    otel + apm definitions
 * [Part 3](#part-3)    full config of otel + apm
+* [Part 4](#part-4)    battle-tested approach using log to stdout
 
 # part 1:
 Nice — you asked for a hands-on, practical, **comprehensive** tour of the observability trifecta (logs, metrics, traces) with concrete Go examples and how to wire them into ELK / Prometheus+Grafana / Jaeger. Below I’ll:
@@ -1118,5 +1119,652 @@ If you'd like, I can now:
 
 Which of these do you want next?
 
+
+# part 4:
+
+Nice — let’s build a battle-tested, production-ready example you can copy/paste and run in **both Docker-only** and **Kubernetes** environments.
+
+We’ll use the industry standard pattern:
+
+**App → stdout (JSON) → container runtime (Docker / containerd) → Fluent Bit (DaemonSet or sidecar) → OpenTelemetry Collector (OTLP) → APM Server → Elasticsearch → Kibana**
+
+You’ll get:
+
+1. A Go app that:
+
+   * logs structured JSON to **stdout** (includes `trace_id` & `span_id`),
+   * sends traces to OTLP Collector,
+   * exposes Prometheus metrics at `/metrics`.
+2. A **Docker Compose** example using Fluent Bit to read Docker container logs and forward them to the Collector.
+3. A **Kubernetes** example using Fluent Bit DaemonSet reading containerd logs (Kubernetes standard) and forwarding to the Collector.
+4. An **OpenTelemetry Collector** config that receives OTLP (traces, logs, metrics) and exports all to **Elastic APM Server** (Elasticsearch/Kibana).
+5. Notes on scaling, sampling, security, and production hardening.
+
+Everything is copy-paste ready. Let’s go.
+
+---
+
+## 0 — High level (what to run)
+
+* Docker: `docker-compose up --build`
+* Kubernetes: `kubectl apply -f k8s/` (manifests included below)
+
+---
+
+## 1 — Go app (stdout JSON + OTLP traces + /metrics)
+
+Create `app/main.go` and `app/go.mod` (Dockerfile provided later for Docker Compose). This app logs JSON to stdout (not files) and injects trace IDs into logs.
+
+### `app/go.mod`
+
+```go
+module example.com/otel-stdout
+
+go 1.21
+
+require (
+    github.com/go-chi/chi/v5 v5.0.8
+    go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.101.0
+    go.opentelemetry.io/otel v1.18.0
+    go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.18.0
+    github.com/prometheus/client_golang v1.14.0
+)
+```
+
+### `app/main.go`
+
+```go
+package main
+
+import (
+    "context"
+    "encoding/json"
+    "fmt"
+    "log"
+    "net/http"
+    "os"
+    "time"
+    "sync/atomic"
+
+    "github.com/go-chi/chi/v5"
+    "github.com/prometheus/client_golang/prometheus"
+    "github.com/prometheus/client_golang/prometheus/promhttp"
+
+    "go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+    "go.opentelemetry.io/otel"
+    "go.opentelemetry.io/otel/trace"
+    "go.opentelemetry.io/otel/attribute"
+    sdkresource "go.opentelemetry.io/otel/sdk/resource"
+    sdktrace "go.opentelemetry.io/otel/sdk/trace"
+    "go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+)
+
+var (
+    reqs = prometheus.NewCounterVec(
+        prometheus.CounterOpts{Name: "example_requests_total", Help: "Total requests"},
+        []string{"path", "status"},
+    )
+    reqDur = prometheus.NewHistogramVec(
+        prometheus.HistogramOpts{Name: "example_request_duration_seconds", Help: "Request durations", Buckets: prometheus.DefBuckets},
+        []string{"path"},
+    )
+    counter uint64
+)
+
+func init() {
+    prometheus.MustRegister(reqs, reqDur)
+}
+
+func initTracer(ctx context.Context) (*sdktrace.TracerProvider, error) {
+    // OTEL collector endpoint via env OTEL_ENDPOINT (default: http://otel-collector:4318)
+    ep := os.Getenv("OTEL_ENDPOINT")
+    if ep == "" {
+        ep = "http://otel-collector:4318"
+    }
+    // otlptracehttp wants host:port string (no http://) for WithEndpoint
+    hostPort := ep
+    if len(hostPort) >= 7 && hostPort[:7] == "http://" {
+        hostPort = hostPort[7:]
+    }
+    client := otlptracehttp.NewClient(
+        otlptracehttp.WithEndpoint(hostPort),
+        otlptracehttp.WithInsecure(),
+    )
+    exporter, err := otlptracehttp.New(ctx, client)
+    if err != nil {
+        return nil, err
+    }
+    tp := sdktrace.NewTracerProvider(
+        sdktrace.WithBatcher(exporter),
+        sdktrace.WithResource(sdkresource.NewWithAttributes(attribute.String("service.name", "example-go-app"))),
+    )
+    otel.SetTracerProvider(tp)
+    return tp, nil
+}
+
+func main() {
+    ctx := context.Background()
+    tp, err := initTracer(ctx)
+    if err != nil {
+        log.Fatalf("init tracer: %v", err)
+    }
+    defer tp.Shutdown(ctx)
+
+    r := chi.NewRouter()
+    r.Handle("/metrics", promhttp.Handler())
+
+    r.Get("/", func(w http.ResponseWriter, r *http.Request) {
+        start := time.Now()
+        ctx := r.Context()
+
+        // business logic
+        time.Sleep(50 * time.Millisecond) // simulate work
+        status := 200
+        if time.Now().Unix()%13 == 0 {
+            status = 500
+            w.WriteHeader(500)
+            fmt.Fprint(w, "error")
+        } else {
+            fmt.Fprint(w, "ok")
+        }
+
+        dur := time.Since(start).Seconds()
+        reqs.WithLabelValues(r.URL.Path, fmt.Sprintf("%d", status)).Inc()
+        reqDur.WithLabelValues(r.URL.Path).Observe(dur)
+
+        // log to stdout as structured JSON and include trace/span ids
+        fields := map[string]interface{}{
+            "ts":     time.Now().UTC().Format(time.RFC3339Nano),
+            "level":  "info",
+            "msg":    "handled request",
+            "method": r.Method,
+            "path":   r.URL.Path,
+            "status": status,
+            "dur":    dur,
+            "id":     atomic.AddUint64(&counter, 1),
+        }
+
+        // extract trace/span
+        if sc := trace.SpanContextFromContext(ctx); sc.IsValid() {
+            fields["trace_id"] = sc.TraceID().String()
+            fields["span_id"] = sc.SpanID().String()
+        }
+        // write JSON to stdout
+        b, _ := json.Marshal(fields)
+        os.Stdout.Write(append(b, '\n'))
+    })
+
+    wrapped := otelhttp.NewHandler(r, "server")
+    srv := &http.Server{Addr: ":8080", Handler: wrapped}
+    log.Println("starting :8080")
+    log.Fatal(srv.ListenAndServe())
+}
+```
+
+**Notes**
+
+* The app writes to **stdout**. When running in containers, the runtime captures stdout logs.
+* `trace.SpanContextFromContext(ctx)` extracts trace info injected by `otelhttp` wrapper — we include `trace_id` and `span_id` in log JSON.
+* The app exports traces via OTLP/HTTP to Collector (env var `OTEL_ENDPOINT`).
+
+---
+
+## 2 — OpenTelemetry Collector config (receive OTLP and export to APM)
+
+Create `collector-config.yaml`. This collector will accept OTLP (traces + logs + metrics) and export to Elastic APM Server via OTLP HTTP.
+
+### `collector-config.yaml`
+
+```yaml
+receivers:
+  otlp:
+    protocols:
+      grpc:
+      http:
+
+  prometheus:
+    config:
+      scrape_configs:
+        - job_name: 'example-go-app'
+          static_configs:
+            - targets: ['app:8080']    # in k8s use service:port
+
+processors:
+  batch:
+    timeout: 10s
+    send_batch_size: 1024
+
+  attributes/service:
+    actions:
+      - action: insert
+        key: service.instance.id
+        value: "${HOSTNAME}"
+
+exporters:
+  otlp/elastic:
+    endpoint: "http://apm-server:8200"   # APM Server OTLP intake
+    # If APM server is secured, add headers or TLS config.
+
+  logging:
+    loglevel: info
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch, attributes/service]
+      exporters: [otlp/elastic, logging]
+
+    logs:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp/elastic, logging]
+
+    metrics:
+      receivers: [prometheus, otlp]
+      processors: [batch]
+      exporters: [otlp/elastic, logging]
+```
+
+**Notes**
+
+* Collector receives OTLP over gRPC (4317) and HTTP (4318). Fluent Bit or Fluentd can call HTTP/OTLP if it supports it; Fluent Bit `out_opentelemetry` works with Collector HTTP at `http://collector:4318/v1/logs` or similar.
+* We export to Elastic APM Server by pointing an OTLP exporter to APM Server. APM Server must have OTLP intake enabled (env/config).
+
+---
+
+## 3 — Docker Compose flow (Docker-only)
+
+This is for a developer laptop or simple Docker environment. Fluent Bit will read Docker container logs (JSON format in `/var/lib/docker/containers/.../*.log`) and send OTLP logs to Collector.
+
+Create `docker-compose.yml`:
+
+```yaml
+version: '3.8'
+services:
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.9.0
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+    volumes:
+      - esdata:/usr/share/elasticsearch/data
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.9.0
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    ports:
+      - "5601:5601"
+    depends_on:
+      - elasticsearch
+
+  apm-server:
+    image: docker.elastic.co/apm/apm-server:8.9.0
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - APM_SERVER_OTLP_ENABLED=true
+      - OUTPUT.elasticsearch.enabled=true
+    ports:
+      - "8200:8200"
+    depends_on:
+      - elasticsearch
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.73.0
+    command: ["--config=/conf/collector-config.yaml"]
+    volumes:
+      - ./collector-config.yaml:/conf/collector-config.yaml:ro
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+    depends_on:
+      - apm-server
+
+  fluent-bit:
+    image: fluent/fluent-bit:2.1.11
+    # mount docker container log directory
+    volumes:
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/log:/var/log:ro
+      - ./fluent-bit/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf:ro
+      - ./fluent-bit/parsers.conf:/fluent-bit/etc/parsers.conf:ro
+    depends_on:
+      - otel-collector
+
+  app:
+    build: ./app
+    environment:
+      - OTEL_ENDPOINT=http://otel-collector:4318
+    ports:
+      - "8080:8080"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    depends_on:
+      - otel-collector
+```
+
+### Fluent Bit config for Docker (`fluent-bit/fluent-bit.conf`)
+
+This config tails Docker JSON logs and uses the `out_opentelemetry` plugin to send OTLP logs to Collector HTTP endpoint.
+
+```ini
+[SERVICE]
+    Flush        1
+    Daemon       Off
+    Log_Level    info
+    Parsers_File parsers.conf
+
+[INPUT]
+    Name              tail
+    Tag               docker.*
+    Path              /var/lib/docker/containers/*/*.log
+    Parser            docker
+    DB                /var/log/flb_kube.db
+    Mem_Buf_Limit     5MB
+    Skip_Long_Lines   On
+    Refresh_Interval  5
+
+[FILTER]
+    Name   kubernetes
+    Match  docker.*
+    # Not running in k8s, but enrich with local host metadata if needed
+
+[OUTPUT]
+    Name  opentelemetry
+    Match docker.*
+    Host  otel-collector
+    Port  4318
+    # Protocol HTTP with OTLP - plugin sends to /v1/logs
+    Mode  http
+    # If plugin requires: OTLP endpoint path can be configured here if needed
+```
+
+### `fluent-bit/parsers.conf`
+
+```ini
+[PARSER]
+    Name        docker
+    Format      json
+    Time_Key    time
+    Time_Format %Y-%m-%dT%H:%M:%S.%L
+    Time_Keep   On
+```
+
+**Run**
+
+```bash
+docker compose up --build
+# then generate traffic
+for i in {1..200}; do curl -s http://localhost:8080/ > /dev/null; done
+```
+
+**Flow**: app logs → Docker json file → Fluent Bit reads files → Fluent Bit out_opentelemetry → Collector HTTP → Collector exports to APM → Elasticsearch.
+
+---
+
+## 4 — Kubernetes flow (containerd / kubelet)
+
+In Kubernetes, best practice is to run Fluent Bit as a DaemonSet that tails `/var/log/containers/*.log` (containerd / CRI). Fluent Bit enriches logs with Kubernetes metadata via `kubernetes` filter and sends them to Collector via OTLP.
+
+You’ll need:
+
+* `otel-collector` Deployment (or DaemonSet), Service (internal).
+* `fluent-bit` DaemonSet (reads container logs and sends to Collector).
+* your app Deployment with sidecarless logging to stdout.
+
+Below are minimal manifests.
+
+### `k8s/otel-collector-deploy.yaml`
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: otel-collector
+  namespace: observability
+spec:
+  selector:
+    app: otel-collector
+  ports:
+    - name: otlp-grpc
+      port: 4317
+    - name: otlp-http
+      port: 4318
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: otel-collector
+  namespace: observability
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: otel-collector
+  template:
+    metadata:
+      labels:
+        app: otel-collector
+    spec:
+      containers:
+        - name: otel-collector
+          image: otel/opentelemetry-collector-contrib:0.73.0
+          args: ["--config=/conf/collector-config.yaml"]
+          volumeMounts:
+            - name: conf
+              mountPath: /conf
+      volumes:
+        - name: conf
+          configMap:
+            name: otel-collector-config
+```
+
+Create a ConfigMap `otel-collector-config` containing the same `collector-config.yaml` shown earlier (adapt `targets` for prometheus scraping if using k8s service names).
+
+### `k8s/fluent-bit-daemonset.yaml`
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fluent-bit-config
+  namespace: observability
+data:
+  fluent-bit.conf: |
+    [SERVICE]
+        Flush        1
+        Daemon       Off
+        Log_Level    info
+        Parsers_File parsers.conf
+
+    [INPUT]
+        Name              tail
+        Tag               kube.*
+        Path              /var/log/containers/*.log
+        Parser            docker
+        DB                /var/log/flb_kube.db
+        Mem_Buf_Limit     5MB
+        Skip_Long_Lines   On
+
+    [FILTER]
+        Name   kubernetes
+        Match  kube.*
+        Kube_URL https://kubernetes.default.svc:443
+        Merge_Log On
+        K8S-Logging.Exclude On
+
+    [OUTPUT]
+        Name  opentelemetry
+        Match kube.*
+        Host  otel-collector.observability.svc.cluster.local
+        Port  4318
+        Mode  http
+
+  parsers.conf: |
+    [PARSER]
+        Name        docker
+        Format      json
+        Time_Key    time
+        Time_Format %Y-%m-%dT%H:%M:%S.%L
+        Time_Keep   On
+
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: fluent-bit
+  namespace: observability
+spec:
+  selector:
+    matchLabels:
+      app: fluent-bit
+  template:
+    metadata:
+      labels:
+        app: fluent-bit
+    spec:
+      serviceAccountName: fluent-bit
+      tolerations:
+        - operator: "Exists"
+      containers:
+        - name: fluent-bit
+          image: fluent/fluent-bit:2.1.11
+          volumeMounts:
+            - name: varlog
+              mountPath: /var/log
+              readOnly: true
+            - name: varlibdockercontainers
+              mountPath: /var/lib/docker/containers
+              readOnly: true
+            - name: config
+              mountPath: /fluent-bit/etc/
+      volumes:
+        - name: varlog
+          hostPath:
+            path: /var/log
+        - name: varlibdockercontainers
+          hostPath:
+            path: /var/lib/docker/containers
+        - name: config
+          configMap:
+            name: fluent-bit-config
+```
+
+**Notes**
+
+* On Kubernetes, containerd logs are in `/var/log/containers` or `/var/log/pods`. Using `Path /var/log/containers/*.log` covers typical setups.
+* `filter kubernetes` adds pod name, namespace, labels, annotations — critical for searching and correlation in Kibana.
+* Fluent Bit uses `out_opentelemetry` plugin to send OTLP logs to Collector HTTP endpoint.
+
+**Apply**
+
+```bash
+kubectl create namespace observability
+kubectl apply -f k8s/otel-collector-configmap.yaml   # contains collector-config.yaml
+kubectl apply -f k8s/otel-collector-deploy.yaml
+kubectl apply -f k8s/fluent-bit-daemonset.yaml
+kubectl apply -f k8s/app-deploy.yaml  # your application Deployment + Service
+```
+
+---
+
+## 5 — Elastic APM Server + Elasticsearch + Kibana
+
+* APM Server must have OTLP intake enabled (`APM_SERVER_OTLP_ENABLED=true`) and be configured to talk to Elasticsearch.
+* Collector OTLP exporter should point to `http://apm-server:8200`.
+* Once APM collects traces & logs, Kibana’s APM app and Discover tab show the signals. Use `trace_id` in logs to jump to traces.
+
+---
+
+## 6 — Production best practices & scaling notes
+
+### Sampling & cost control
+
+* Do **not** export 100% of traces in high throughput systems:
+
+  * Use **Collector processors**: `probabilistic_sampler`, `tail_sampling` (contrib) to sample non-error traffic.
+  * Keep **100% of error traces**, sample regular traces.
+* Metrics: export aggregated metrics to Prometheus and remote_write or let Collector handle metrics pipeline.
+
+### Fluent Bit scaling / resources
+
+* Fluent Bit is lightweight and designed to run as a DaemonSet across nodes. Typical production setup:
+
+  * 1 Fluent Bit pod per node (DaemonSet)
+  * Resource requests: CPU 50–200m, memory 50–200Mi depending on log volume.
+  * Use buffering and persistent DB (pos_file) to survive restarts.
+
+### Collector scaling
+
+* Run Collector as **deployment with >=2 replicas** behind a Service. Collectors are stateless in this pattern (unless you use tail sampling that needs local storage).
+* For tail sampling, use a **single dedicated Collector with persistent store** or use a sampling agent designed for that.
+
+### Resilience & delivery guarantees
+
+* Fluent Bit supports retry/backoff and buffering when collector/APM is unreachable.
+* Configure Fluent Bit `storage.type filesystem` to avoid data loss on restarts (persistent buffer).
+* Use TLS and mTLS for securing OTLP traffic.
+
+### Correlation (logs ↔ traces ↔ metrics)
+
+* Inject `trace_id` and `span_id` into JSON logs (done in the Go app code).
+* Fluent Bit’s Kubernetes filter adds `kubernetes.pod_name`, `namespace`, `labels`, etc.
+* APM traces provide `trace_id` you can use as a key in Kibana to correlate.
+
+### Security
+
+* Use TLS between Collector, APM Server and Elasticsearch.
+* Require API Keys for APM ingestion.
+* Restrict network access (private subnets, security groups).
+
+---
+
+## 7 — Troubleshooting tips
+
+* If you don’t see logs in Kibana:
+
+  * Check Fluent Bit logs for errors (connectivity, parsing).
+  * Check Collector logs; ensure `otlp` receiver listening on the expected port.
+  * Confirm APM Server accepts OTLP (OTLP intake enabled).
+* If traces are missing:
+
+  * Confirm app can reach Collector (`OTEL_ENDPOINT`).
+  * Check Collector log exporter errors (resource limits, rejected due to malformed attributes).
+* If metrics missing:
+
+  * Ensure Collector scrapes `/metrics` (prometheus receiver) or app exposes `/metrics`.
+
+---
+
+## 8 — Summary: recommended default configs
+
+* Use **stdout JSON logging** (app-level).
+* Run **Fluent Bit DaemonSet** (k8s) or Fluent Bit container (Docker Compose) to tail container logs, enrich, forward to Collector.
+* Use **OpenTelemetry Collector** (contrib) as central pipeline to apply sampling, enrichment, and to export to APM/Elastic.
+* Run **APM Server → Elasticsearch → Kibana** for stored, searchable telemetry.
+
+---
+
+## 9 — Want the files as a repo / next steps?
+
+I can:
+
+* produce a ZIP/Git repo with:
+
+  * `app/` (code + Dockerfile),
+  * `docker-compose.yml` + Fluent Bit config,
+  * `collector-config.yaml`,
+  * `k8s/` manifests (collector, fluent-bit, app),
+* OR generate the Kubernetes manifests fully rendered (including collector ConfigMap),
+* OR add a Fluent Bit config that writes directly to Elasticsearch (skip Collector) — sometimes simpler for logs-only pipelines.
+
+Which one do you want me to generate now? I’ll drop the files (or a zip) directly into this chat.
 
 
