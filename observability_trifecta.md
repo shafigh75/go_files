@@ -1,3 +1,9 @@
+### Table of Contents
+
+* [Part One](#part-one)
+* [Part 2](#part-2)
+* [Part 3](#part-3)
+
 # part one:
 Nice — you asked for a hands-on, practical, **comprehensive** tour of the observability trifecta (logs, metrics, traces) with concrete Go examples and how to wire them into ELK / Prometheus+Grafana / Jaeger. Below I’ll:
 
