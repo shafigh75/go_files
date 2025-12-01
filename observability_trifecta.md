@@ -1,10 +1,10 @@
 ### Table of Contents
 
-* [Part One](#part-one)
-* [Part 2](#part-2)
-* [Part 3](#part-3)
+* [Part 1](#part-1)  basic definitions and example
+* [Part 2](#part-2)    otel + apm definitions
+* [Part 3](#part-3)    full config of otel + apm
 
-# part one:
+# part 1:
 Nice — you asked for a hands-on, practical, **comprehensive** tour of the observability trifecta (logs, metrics, traces) with concrete Go examples and how to wire them into ELK / Prometheus+Grafana / Jaeger. Below I’ll:
 
 1. define each signal and give a real-world example;
