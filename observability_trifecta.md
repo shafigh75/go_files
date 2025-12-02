@@ -829,12 +829,32 @@ receivers:
   filelog:
     include:
       - "/var/log/app/app.log"
-    multiline:
-      pattern: '^\\s'
-      match: after
+    # The Go app writes single-line JSON, so multiline processing is not needed.
+    # We use operators to parse the JSON and move fields to standard locations.
     operators:
-      - type: json
-        parse_from: "message"
+      # 1. Parse the JSON log line and put all fields into the body.
+      - id: parse-json
+        type: json_parser
+        # The Go app writes bare JSON logs, so we don't need to specify 'parse_from'.
+        # The entire log line is the JSON object.
+
+      # 2. Move the original timestamp 'ts' to the standard timestamp field.
+      - id: move-ts
+        type: move
+        from: body.ts
+        to: time
+
+      # 3. Promote the rest of the body content (e.g., 'msg', 'path', 'status', 'dur') 
+      #    to log resource attributes for better correlation and querying.
+      - id: attributes-from-json
+        type: copy_to_attributes
+        from: body.msg
+        to: log.message
+        
+      # 4. Remove the remaining structured body (optional, but cleaner)
+      - id: remove-body
+        type: remove
+        field: body
 
 processors:
   batch:
@@ -855,7 +875,7 @@ exporters:
     #   "Authorization": "ApiKey <YOUR_API_KEY>"
 
   logging:
-    loglevel: info
+    loggevel: info
 
 service:
   pipelines:
@@ -870,9 +890,10 @@ service:
       exporters: [otlp/elastic, logging]
 
     logs:
-      receivers: [filelog, otlp]
-      processors: [batch]
+      receivers: [filelog] # Only filelog here; OTLP logs would typically be used for complex log streams
+      processors: [batch, attributes] # Use the attributes processor to add service.instance.id
       exporters: [otlp/elastic, logging]
+
 ```
 
 Notes:
@@ -889,20 +910,43 @@ Create the following files under `app/`.
 ### File: `app/Dockerfile`
 
 ```dockerfile
+# --- Stage 1: Builder ---
 FROM golang:1.23-alpine AS build
-WORKDIR /src
-COPY go.mod go.sum ./
-RUN apk add git
-RUN go mod download
-COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -o /app ./main.go
 
+WORKDIR /src
+
+# Install git, although it's only needed if go.mod has git dependencies (good practice)
+RUN apk add --no-cache git 
+
+# Copy module files and download dependencies
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source code and build the application
+COPY . .
+# Build the executable with a descriptive name inside the /tmp folder
+# This avoids overwriting the /app directory in the final stage.
+RUN CGO_ENABLED=0 GOOS=linux go build -o /tmp/app_binary ./main.go
+
+# --- Stage 2: Final minimal image ---
 FROM alpine:3.18
-RUN mkdir -p /app /var/log/app
-COPY --from=build /app /app
-WORKDIR /app
+
+# Create log volume directory and set permissions
+# We set ownership to 1000:1000 which matches the non-root user 'appuser' created below.
+RUN mkdir -p /var/log/app && chown -R 1000:1000 /var/log/app
+
+# Create a non-root user (UID 1000) and switch to it for security
+RUN adduser -D -u 1000 appuser
+USER appuser
+
+# Copy the built binary from the builder stage to the root of the final image
+COPY --from=build /tmp/app_binary /app_binary
+
+# Set the entrypoint to run the binary (must be the full filename)
+ENTRYPOINT ["/app_binary"]
+
+# Default port
 EXPOSE 8080
-CMD ["/app"]
 ```
 
 ### File: `app/go.mod`
