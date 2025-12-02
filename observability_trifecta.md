@@ -851,17 +851,15 @@ receivers:
           parse_from: attributes.ts
           layout: '%Y-%m-%dT%H:%M:%S.%fZ'
 
-      # Clean up timestamp
       - type: remove
         field: attributes.ts
 
-      # --- TRACE ID ---
+      # Extract trace/span IDs so they are indexed correctly in ES
       - type: move
         if: 'attributes.trace_id != nil'
         from: attributes.trace_id
         to: resource["trace_id"]
-
-      # --- SPAN ID ---
+        
       - type: move
         if: 'attributes["span.id"] != nil'
         from: attributes["span.id"]
@@ -879,11 +877,17 @@ processors:
         value: app.logs
 
 exporters:
-  # ### CHANGED: Switched from otlphttp to otlp (gRPC) ###
-  otlp/elastic:
-    # APM Server 7.17 listens for gRPC on port 8200
-    # Note: No "http://" prefix for gRPC
+  # 1. OTLP gRPC for Traces/Metrics (To APM Server 7.17)
+  otlp/apm:
     endpoint: apm-server:8200
+    tls:
+      insecure: true
+
+  # 2. Native ES for Logs (Direct to Elasticsearch 8.9)
+  elasticsearch:
+    endpoints: ["http://elasticsearch:9200"]
+    # We create a specific index for these logs
+    logs_index: "app-logs"
     tls:
       insecure: true
 
@@ -895,17 +899,18 @@ service:
     traces:
       receivers: [otlp]
       processors: [batch, attributes]
-      exporters: [otlp/elastic]
+      exporters: [otlp/apm] # Goes to APM Server
 
     metrics:
       receivers: [prometheus]
       processors: [batch]
-      exporters: [otlp/elastic]
+      exporters: [otlp/apm] # Goes to APM Server
 
     logs:
       receivers: [filelog]
       processors: [batch, attributes]
-      exporters: [otlp/elastic]
+      exporters: [elasticsearch] # ### CHANGED: Goes Direct to ES ###
+
 
 ```
 
@@ -1020,14 +1025,12 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors" // <--- ADDED: Needed for errors.New
 	"fmt"
 	"log"
 	"net/http"
-  // ADD THIS IMPORT:
-  "strings" 
-  // ADD THIS IMPORT:
-  "go.opentelemetry.io/otel/trace"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -1037,11 +1040,12 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes" // <--- ADDED: Needed for codes.Error
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	sdkresource "go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
-	// ADDED: Import the semantic conventions package for resource attributes
-	semconv "go.opentelemetry.io/otel/semconv/v1.26.0" 
+	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
+	"go.opentelemetry.io/otel/trace"
 )
 
 var (
@@ -1084,36 +1088,32 @@ func initTracer(ctx context.Context) (*sdktrace.TracerProvider, error) {
 	}
 
 	// FIX: Strip the scheme (http:// or https://) because WithEndpoint expects host:port
-  if strings.HasPrefix(endpoint, "http://") {
-      endpoint = strings.TrimPrefix(endpoint, "http://")
-  } else if strings.HasPrefix(endpoint, "https://") {
-      endpoint = strings.TrimPrefix(endpoint, "https://")
-  }
+	if strings.HasPrefix(endpoint, "http://") {
+		endpoint = strings.TrimPrefix(endpoint, "http://")
+	} else if strings.HasPrefix(endpoint, "https://") {
+		endpoint = strings.TrimPrefix(endpoint, "https://")
+	}
 
-	// otlptracehttp.New expects options directly.
 	exporter, err := otlptracehttp.New(ctx,
 		otlptracehttp.WithEndpoint(endpoint), // otlptracehttp expects host:port
-		otlptracehttp.WithInsecure(), // Used unconditionally for simplicity
+		otlptracehttp.WithInsecure(),         // Used unconditionally for simplicity
 	)
 	if err != nil {
 		return nil, err
 	}
 
-	// FIX: Explicitly create a slice of attributes and use the semantic convention.
 	attributes := []attribute.KeyValue{
 		semconv.ServiceName("example-go-app"),
 	}
 
-	// FIX for Error 3: We now pass the required Schema URL (string) as the first argument,
-	// followed by the attributes using the spread operator (...).
 	res := sdkresource.NewWithAttributes(
-		semconv.SchemaURL, // REQUIRED: Schema URL as the first string argument
+		semconv.SchemaURL,
 		attributes...,
 	)
 
 	tp := sdktrace.NewTracerProvider(
 		sdktrace.WithBatcher(exporter),
-		sdktrace.WithResource(res), // Pass the created resource
+		sdktrace.WithResource(res),
 	)
 	otel.SetTracerProvider(tp)
 	return tp, nil
@@ -1132,6 +1132,24 @@ func main() {
 	r := chi.NewRouter()
 
 	r.Handle("/metrics", promhttp.Handler())
+
+	// --- NEW ERROR ROUTE ---
+	r.Get("/error", func(w http.ResponseWriter, r *http.Request) {
+		// Get the current span
+		span := trace.SpanFromContext(r.Context())
+
+		// Create a real Go error
+		err := errors.New("something went terribly wrong in the database")
+
+		// 1. Record the error in the trace (This creates the "Exception" event with stack trace)
+		span.RecordError(err, trace.WithStackTrace(true))
+
+		// 2. Set the status of the span to Error so it turns red in APM
+		span.SetStatus(codes.Error, "critical failure")
+
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprint(w, "Check Kibana for the stack trace!")
+	})
 
 	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
@@ -1152,13 +1170,13 @@ func main() {
 		reqDur.WithLabelValues(r.URL.Path).Observe(dur)
 
 		spanContext := trace.SpanFromContext(r.Context()).SpanContext()
-    traceID := ""
-    spanID := ""
-        
-    if spanContext.IsValid() {
-        traceID = spanContext.TraceID().String()
-        spanID = spanContext.SpanID().String()
-    }
+		traceID := ""
+		spanID := ""
+
+		if spanContext.IsValid() {
+			traceID = spanContext.TraceID().String()
+			spanID = spanContext.SpanID().String()
+		}
 		// Log structured JSON — include trace information if available
 		fields := map[string]interface{}{
 			"ts":     time.Now().UTC().Format(time.RFC3339Nano),
@@ -1169,9 +1187,9 @@ func main() {
 			"status": status,
 			"dur":    dur,
 			// Add standard Elastic/OTel correlation fields
-      "trace.id": traceID, 
-      "span.id":  spanID,
-      "trace_id": traceID, // redundancy for different backend parsers
+			"trace.id": traceID,
+			"span.id":  spanID,
+			"trace_id": traceID, // redundancy for different backend parsers
 		}
 		logJSON(logger, fields)
 	})
@@ -1185,6 +1203,7 @@ func main() {
 		log.Fatalf("server failed: %v", err)
 	}
 }
+
 
 ```
 
