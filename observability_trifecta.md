@@ -927,141 +927,162 @@ require (
 package main
 
 import (
-    "context"
-    "encoding/json"
-    "fmt"
-    "log"
-    "net/http"
-    "os"
-    "time"
+	"context"
+	"encoding/json"
+	"fmt"
+	"log"
+	"net/http"
+	"os"
+	"strings" // <-- ADDED: Needed for endpoint string manipulation
+	"time"
 
-    "github.com/go-chi/chi/v5"
-    "github.com/prometheus/client_golang/prometheus"
-    "github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/go-chi/chi/v5"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
-    "go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
-    "go.opentelemetry.io/otel"
-    "go.opentelemetry.io/otel/attribute"
-    sdkresource "go.opentelemetry.io/otel/sdk/resource"
-    sdktrace "go.opentelemetry.io/otel/sdk/trace"
-    "go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	sdkresource "go.opentelemetry.io/otel/sdk/resource"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+	// ADDED: Import the semantic conventions package for resource attributes
+	semconv "go.opentelemetry.io/otel/semconv/v1.26.0" 
 )
 
 var (
-    reqs = prometheus.NewCounterVec(
-        prometheus.CounterOpts{ Name: "example_requests_total", Help: "Total requests" },
-        []string{"path", "status"},
-    )
-    reqDur = prometheus.NewHistogramVec(
-        prometheus.HistogramOpts{ Name: "example_request_duration_seconds", Help: "Request durations", Buckets: prometheus.DefBuckets },
-        []string{"path"},
-    )
+	reqs = prometheus.NewCounterVec(
+		prometheus.CounterOpts{Name: "example_requests_total", Help: "Total requests"},
+		[]string{"path", "status"},
+	)
+	reqDur = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{Name: "example_request_duration_seconds", Help: "Request durations", Buckets: prometheus.DefBuckets},
+		[]string{"path"},
+	)
 )
 
 func init() {
-    prometheus.MustRegister(reqs, reqDur)
+	prometheus.MustRegister(reqs, reqDur)
 }
 
 // Simple JSON logger that writes to /var/log/app/app.log
 func newJSONLogger(path string) *log.Logger {
-    f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
-    if err != nil {
-        panic(err)
-    }
-    return log.New(f, "", 0)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		panic(err)
+	}
+	return log.New(f, "", 0)
 }
 
 func logJSON(l *log.Logger, fields map[string]interface{}) {
-    _ = l.Output(2, mustJSON(fields))
+	_ = l.Output(2, mustJSON(fields))
 }
 
 func mustJSON(m map[string]interface{}) string {
-    b, _ := json.Marshal(m)
-    return string(b)
+	b, _ := json.Marshal(m)
+	return string(b)
 }
 
 func initTracer(ctx context.Context) (*sdktrace.TracerProvider, error) {
-    endpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
-    if endpoint == "" {
-        endpoint = "http://localhost:4318"
-    }
-    insecure := os.Getenv("OTEL_EXPORTER_OTLP_INSECURE") == "true"
+	endpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+	if endpoint == "" {
+		endpoint = "http://localhost:4318"
+	}
 
-    client := otlptracehttp.NewClient(
-        otlptracehttp.WithEndpoint(endpoint[len("http://"):]), // otlptracehttp expects host:port
-        otlptracehttp.WithInsecure(),
-    )
-    // Note: In this example we use WithInsecure unconditionally for simplicity. For production, configure TLS correctly.
-    exporter, err := otlptracehttp.New(ctx, client)
-    if err != nil {
-        return nil, err
-    }
+	// OTLP trace exporter client options often expect host:port.
+	// Strip protocols if they were included by the user, as the original code attempted.
+	if strings.HasPrefix(endpoint, "http://") {
+		endpoint = endpoint[len("http://"):]
+	} else if strings.HasPrefix(endpoint, "https://") {
+		endpoint = endpoint[len("https://"):]
+	}
 
-    tp := sdktrace.NewTracerProvider(
-        sdktrace.WithBatcher(exporter),
-        sdktrace.WithResource(sdkresource.NewWithAttributes(attribute.String("service.name", "example-go-app"))),
-    )
-    otel.SetTracerProvider(tp)
-    return tp, nil
+	// otlptracehttp.New expects options directly.
+	exporter, err := otlptracehttp.New(ctx,
+		otlptracehttp.WithEndpoint(endpoint), // otlptracehttp expects host:port
+		otlptracehttp.WithInsecure(), // Used unconditionally for simplicity
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	// FIX: Explicitly create a slice of attributes and use the semantic convention.
+	attributes := []attribute.KeyValue{
+		semconv.ServiceName("example-go-app"),
+	}
+
+	// FIX for Error 3: We now pass the required Schema URL (string) as the first argument,
+	// followed by the attributes using the spread operator (...).
+	res := sdkresource.NewWithAttributes(
+		semconv.SchemaURL, // REQUIRED: Schema URL as the first string argument
+		attributes...,
+	)
+
+	tp := sdktrace.NewTracerProvider(
+		sdktrace.WithBatcher(exporter),
+		sdktrace.WithResource(res), // Pass the created resource
+	)
+	otel.SetTracerProvider(tp)
+	return tp, nil
 }
 
 func main() {
-    ctx := context.Background()
-    tp, err := initTracer(ctx)
-    if err != nil {
-        panic(err)
-    }
-    defer func() { _ = tp.Shutdown(ctx) }()
+	ctx := context.Background()
+	tp, err := initTracer(ctx)
+	if err != nil {
+		panic(err)
+	}
+	defer func() { _ = tp.Shutdown(ctx) }()
 
-    logger := newJSONLogger("/var/log/app/app.log")
+	logger := newJSONLogger("/var/log/app/app.log")
 
-    r := chi.NewRouter()
+	r := chi.NewRouter()
 
-    r.Handle("/metrics", promhttp.Handler())
+	r.Handle("/metrics", promhttp.Handler())
 
-    r.Get("/", func(w http.ResponseWriter, r *http.Request) {
-        start := time.Now()
-        // simulated work
-        time.Sleep(50 * time.Millisecond)
+	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		// simulated work
+		time.Sleep(50 * time.Millisecond)
 
-        status := 200
-        if time.Now().Unix()%11 == 0 {
-            status = 500
-            w.WriteHeader(500)
-            fmt.Fprint(w, "internal error")
-        } else {
-            fmt.Fprint(w, "hello world")
-        }
+		status := 200
+		if time.Now().Unix()%11 == 0 {
+			status = 500
+			w.WriteHeader(500)
+			fmt.Fprint(w, "internal error")
+		} else {
+			fmt.Fprint(w, "hello world")
+		}
 
-        dur := time.Since(start).Seconds()
-        reqs.WithLabelValues(r.URL.Path, fmt.Sprintf("%d", status)).Inc()
-        reqDur.WithLabelValues(r.URL.Path).Observe(dur)
+		dur := time.Since(start).Seconds()
+		reqs.WithLabelValues(r.URL.Path, fmt.Sprintf("%d", status)).Inc()
+		reqDur.WithLabelValues(r.URL.Path).Observe(dur)
 
-        // Log structured JSON — include trace information if available
-        fields := map[string]interface{}{
-            "ts": time.Now().UTC().Format(time.RFC3339Nano),
-            "level": "info",
-            "msg": "handled request",
-            "method": r.Method,
-            "path": r.URL.Path,
-            "status": status,
-            "dur": dur,
-        }
-        // If there's an OTel span on the context, add trace id
-        if span := otel.GetTracerProvider().Tracer("example"); span != nil {
-            // We can't directly extract span context from otel API without a span. Simpler: rely on the collector to correlate metrics/logs with traces via resource attributes and timestamps.
-        }
-        logJSON(logger, fields)
-    })
+		// Log structured JSON — include trace information if available
+		fields := map[string]interface{}{
+			"ts":     time.Now().UTC().Format(time.RFC3339Nano),
+			"level":  "info",
+			"msg":    "handled request",
+			"method": r.Method,
+			"path":   r.URL.Path,
+			"status": status,
+			"dur":    dur,
+		}
+		// If there's an OTel span on the context, add trace id
+		if span := otel.GetTracerProvider().Tracer("example"); span != nil {
+			// We can't directly extract span context from otel API without a span. Simpler: rely on the collector to correlate metrics/logs with traces via resource attributes and timestamps.
+		}
+		logJSON(logger, fields)
+	})
 
-    // wrap router with otelhttp so traces are created for requests
-    wrapped := otelhttp.NewHandler(r, "server")
-    srv := &http.Server{ Addr: ":8080", Handler: wrapped }
+	// wrap router with otelhttp so traces are created for requests
+	wrapped := otelhttp.NewHandler(r, "server")
+	srv := &http.Server{Addr: ":8080", Handler: wrapped}
 
-    log.Printf("starting app on :8080")
-    if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-        log.Fatalf("server failed: %v", err)
-    }
+	log.Printf("starting app on :8080")
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Fatalf("server failed: %v", err)
+	}
 }
 ```
 
