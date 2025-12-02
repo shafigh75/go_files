@@ -889,9 +889,10 @@ Create the following files under `app/`.
 ### File: `app/Dockerfile`
 
 ```dockerfile
-FROM golang:1.21-alpine AS build
+FROM golang:1.23-alpine AS build
 WORKDIR /src
 COPY go.mod go.sum ./
+RUN apk add git
 RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -o /app ./main.go
