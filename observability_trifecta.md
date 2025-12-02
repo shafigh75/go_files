@@ -747,65 +747,81 @@ This document contains a complete, copy-paste ready example that implements your
 
 ```yaml
 version: '3.8'
+
 services:
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.9.0
     environment:
       - discovery.type=single-node
       - xpack.security.enabled=false
-      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
-    volumes:
-      - esdata:/usr/share/elasticsearch/data
+      - ES_JAVA_OPTS=-Xms1g -Xmx1g
     ports:
       - "9200:9200"
+    volumes:
+      - esdata:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=50s || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
 
   kibana:
     image: docker.elastic.co/kibana/kibana:8.9.0
     environment:
       - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - xpack.security.enabled=false
+      - XPACK_FLEET_AGENTS_ENABLED=false
     ports:
       - "5601:5601"
     depends_on:
-      - elasticsearch
+      elasticsearch:
+        condition: service_healthy
 
+  # APM Server 7.17.13 (The savior)
   apm-server:
-    image: docker.elastic.co/apm/apm-server:8.9.0
-    environment:
-      - "ELASTICSEARCH_HOSTS=http://elasticsearch:9200"
-      - "APM_SERVER_OTLP_ENABLED=true"
-      - "OUTPUT.elasticsearch.enabled=true"
-      - "dashboard.enabled=true"
+    image: docker.elastic.co/apm/apm-server:7.17.13
+    command: >
+      apm-server -e
+        -E apm-server.kibana.enabled=true
+        -E apm-server.kibana.host="http://kibana:5601"
+        -E output.elasticsearch.hosts=["http://elasticsearch:9200"]
+        -E apm-server.auth.anonymous.enabled=true
+        -E apm-server.rum.enabled=true
     ports:
-      - "8200:8200"   # APM Server
+      - "8200:8200" 
+      - "8201:8200"
     depends_on:
       - elasticsearch
+      - kibana # Removed "condition: service_healthy" to fix your error
 
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:0.73.0
+    image: otel/opentelemetry-collector-contrib:0.88.0
     command: ["--config=/conf/collector-config.yaml"]
     volumes:
-      - ./collector-config.yaml:/conf/collector-config.yaml:ro
-      - ./app_logs:/var/log/app:rw
-    ports:
-      - "4317:4317" # OTLP gRPC
-      - "4318:4318" # OTLP HTTP
+      - ./collector-config.yaml:/conf/collector-config.yaml
+      - ./app_logs:/var/log/app
     depends_on:
       - apm-server
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+      - "8889:8889" 
 
   app:
     build: ./app
-    volumes:
-      - ./app_logs:/var/log/app:rw
-    ports:
-      - "8080:8080"
     environment:
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
       - OTEL_EXPORTER_OTLP_INSECURE=true
     depends_on:
       - otel-collector
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./app_logs:/var/log/app
 
 volumes:
   esdata:
+
 ```
 
 ---
@@ -816,82 +832,80 @@ volumes:
 receivers:
   otlp:
     protocols:
-      grpc:
       http:
+      grpc:
 
   prometheus:
     config:
       scrape_configs:
-        - job_name: 'example-go-app'
+        - job_name: app
+          scrape_interval: 5s
           static_configs:
-            - targets: ['app:8080']
+            - targets: ["app:8080"]
 
   filelog:
-    include:
-      - "/var/log/app/app.log"
+    include: ["/var/log/app/app.log"]
     operators:
-      # 1. Parse the entire log line as JSON, placing fields into the body map.
-      - id: parse-json
-        type: json_parser
+      - type: json_parser
+        timestamp:
+          parse_from: attributes.ts
+          layout: '%Y-%m-%dT%H:%M:%S.%fZ'
 
-      # 2. Map the application's 'ts' field (timestamp) to an attribute.
-      - id: move-ts-to-attribute
-        type: move
-        from: body.ts
-        to: attributes.timestamp
+      # Clean up timestamp
+      - type: remove
+        field: attributes.ts
 
-      # 3. Move the application's 'msg' field to the Log Record's main 'body' field.
-      - id: set-message-body
-        type: move
-        from: body.msg
-        to: body
+      # --- TRACE ID ---
+      - type: move
+        if: 'attributes.trace_id != nil'
+        from: attributes.trace_id
+        to: resource["trace_id"]
 
-      # 4. Use singular 'field' key for removal
-      - id: remove-original-ts
-        type: remove
-        field: body.ts 
-
-      # 5. Remove the 'level' field
-      - id: remove-level
-        type: remove
-        field: body.level
+      # --- SPAN ID ---
+      - type: move
+        if: 'attributes["span.id"] != nil'
+        from: attributes["span.id"]
+        to: resource["span_id"]
 
 processors:
   batch:
-    timeout: 10s
-    send_batch_size: 1024
-
   attributes:
     actions:
       - action: insert
-        key: service.instance.id
-        value: "${HOSTNAME}"
+        key: service.name
+        value: example-go-app
+      - action: insert
+        key: event.dataset
+        value: app.logs
 
 exporters:
+  # ### CHANGED: Switched from otlphttp to otlp (gRPC) ###
   otlp/elastic:
-    endpoint: "http://apm-server:8200"
-    # CRITICAL FIX: Explicitly set protocol to HTTP to avoid the TLS handshake error.
-    protocol: http
+    # APM Server 7.17 listens for gRPC on port 8200
+    # Note: No "http://" prefix for gRPC
+    endpoint: apm-server:8200
+    tls:
+      insecure: true
 
-  logging:
-    loglevel: info
+  debug:
+    verbosity: detailed
 
 service:
   pipelines:
     traces:
       receivers: [otlp]
       processors: [batch, attributes]
-      exporters: [otlp/elastic, logging]
+      exporters: [otlp/elastic]
 
     metrics:
       receivers: [prometheus]
       processors: [batch]
-      exporters: [otlp/elastic, logging]
+      exporters: [otlp/elastic]
 
     logs:
-      receivers: [filelog] 
-      processors: [batch, attributes] 
-      exporters: [otlp/elastic, logging]
+      receivers: [filelog]
+      processors: [batch, attributes]
+      exporters: [otlp/elastic]
 
 ```
 
@@ -909,6 +923,7 @@ Create the following files under `app/`.
 ### File: `app/Dockerfile`
 
 ```dockerfile
+# --- Stage 1: Builder ---
 # --- Stage 1: Builder ---
 FROM golang:1.23-alpine AS build
 
@@ -946,6 +961,7 @@ ENTRYPOINT ["/app_binary"]
 
 # Default port
 EXPOSE 8080
+
 ```
 
 ### File: `app/go.mod`
@@ -953,15 +969,47 @@ EXPOSE 8080
 ```go
 module example.com/otel-full
 
-go 1.21
+go 1.23.0
+
+toolchain go1.24.3
 
 require (
-    github.com/go-chi/chi/v5 v5.0.8
-    go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.101.0
-    go.opentelemetry.io/otel v1.18.0
-    go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.18.0
-    github.com/prometheus/client_golang v1.14.0
+	github.com/go-chi/chi/v5 v5.0.8
+	github.com/prometheus/client_golang v1.14.0
+	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.63.0
+	go.opentelemetry.io/otel v1.38.0
+	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.18.0
+	go.opentelemetry.io/otel/sdk v1.38.0
+	go.opentelemetry.io/otel/trace v1.38.0
 )
+
+require (
+	github.com/beorn7/perks v1.0.1 // indirect
+	github.com/cenkalti/backoff/v4 v4.2.1 // indirect
+	github.com/cespare/xxhash/v2 v2.2.0 // indirect
+	github.com/felixge/httpsnoop v1.0.4 // indirect
+	github.com/go-logr/logr v1.4.3 // indirect
+	github.com/go-logr/stdr v1.2.2 // indirect
+	github.com/golang/protobuf v1.5.3 // indirect
+	github.com/google/uuid v1.6.0 // indirect
+	github.com/grpc-ecosystem/grpc-gateway/v2 v2.16.0 // indirect
+	github.com/matttproud/golang_protobuf_extensions v1.0.1 // indirect
+	github.com/prometheus/client_model v0.3.0 // indirect
+	github.com/prometheus/common v0.37.0 // indirect
+	github.com/prometheus/procfs v0.8.0 // indirect
+	go.opentelemetry.io/auto/sdk v1.1.0 // indirect
+	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.18.0 // indirect
+	go.opentelemetry.io/otel/metric v1.38.0 // indirect
+	go.opentelemetry.io/proto/otlp v1.0.0 // indirect
+	golang.org/x/net v0.12.0 // indirect
+	golang.org/x/sys v0.35.0 // indirect
+	golang.org/x/text v0.11.0 // indirect
+	google.golang.org/genproto/googleapis/api v0.0.0-20230711160842-782d3b101e98 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20230711160842-782d3b101e98 // indirect
+	google.golang.org/grpc v1.58.0 // indirect
+	google.golang.org/protobuf v1.31.0 // indirect
+)
+
 ```
 
 ### File: `app/main.go`
@@ -975,8 +1023,11 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+  // ADD THIS IMPORT:
+  "strings" 
+  // ADD THIS IMPORT:
+  "go.opentelemetry.io/otel/trace"
 	"os"
-	"strings" // <-- ADDED: Needed for endpoint string manipulation
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -1032,13 +1083,12 @@ func initTracer(ctx context.Context) (*sdktrace.TracerProvider, error) {
 		endpoint = "http://localhost:4318"
 	}
 
-	// OTLP trace exporter client options often expect host:port.
-	// Strip protocols if they were included by the user, as the original code attempted.
-	if strings.HasPrefix(endpoint, "http://") {
-		endpoint = endpoint[len("http://"):]
-	} else if strings.HasPrefix(endpoint, "https://") {
-		endpoint = endpoint[len("https://"):]
-	}
+	// FIX: Strip the scheme (http:// or https://) because WithEndpoint expects host:port
+  if strings.HasPrefix(endpoint, "http://") {
+      endpoint = strings.TrimPrefix(endpoint, "http://")
+  } else if strings.HasPrefix(endpoint, "https://") {
+      endpoint = strings.TrimPrefix(endpoint, "https://")
+  }
 
 	// otlptracehttp.New expects options directly.
 	exporter, err := otlptracehttp.New(ctx,
@@ -1101,6 +1151,14 @@ func main() {
 		reqs.WithLabelValues(r.URL.Path, fmt.Sprintf("%d", status)).Inc()
 		reqDur.WithLabelValues(r.URL.Path).Observe(dur)
 
+		spanContext := trace.SpanFromContext(r.Context()).SpanContext()
+    traceID := ""
+    spanID := ""
+        
+    if spanContext.IsValid() {
+        traceID = spanContext.TraceID().String()
+        spanID = spanContext.SpanID().String()
+    }
 		// Log structured JSON — include trace information if available
 		fields := map[string]interface{}{
 			"ts":     time.Now().UTC().Format(time.RFC3339Nano),
@@ -1110,10 +1168,10 @@ func main() {
 			"path":   r.URL.Path,
 			"status": status,
 			"dur":    dur,
-		}
-		// If there's an OTel span on the context, add trace id
-		if span := otel.GetTracerProvider().Tracer("example"); span != nil {
-			// We can't directly extract span context from otel API without a span. Simpler: rely on the collector to correlate metrics/logs with traces via resource attributes and timestamps.
+			// Add standard Elastic/OTel correlation fields
+      "trace.id": traceID, 
+      "span.id":  spanID,
+      "trace_id": traceID, // redundancy for different backend parsers
 		}
 		logJSON(logger, fields)
 	})
@@ -1127,6 +1185,7 @@ func main() {
 		log.Fatalf("server failed: %v", err)
 	}
 }
+
 ```
 
 Notes about the app:
