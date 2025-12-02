@@ -829,32 +829,33 @@ receivers:
   filelog:
     include:
       - "/var/log/app/app.log"
-    # The Go app writes single-line JSON, so multiline processing is not needed.
-    # We use operators to parse the JSON and move fields to standard locations.
     operators:
-      # 1. Parse the JSON log line and put all fields into the body.
+      # 1. Parse the entire log line as JSON, placing fields into the body map.
       - id: parse-json
         type: json_parser
-        # The Go app writes bare JSON logs, so we don't need to specify 'parse_from'.
-        # The entire log line is the JSON object.
 
-      # 2. Move the original timestamp 'ts' to the standard timestamp field.
-      - id: move-ts
+      # 2. Map the application's 'ts' field (timestamp) to an attribute.
+      # FIX for 'unrecognized prefix': We map to 'attributes.timestamp' instead of the root 'timestamp' field.
+      - id: move-ts-to-attribute
         type: move
         from: body.ts
-        to: time
+        to: attributes.timestamp
 
-      # 3. Promote the rest of the body content (e.g., 'msg', 'path', 'status', 'dur') 
-      #    to log resource attributes for better correlation and querying.
-      - id: attributes-from-json
-        type: copy_to_attributes
+      # 3. Move the application's 'msg' field to the Log Record's main 'body' field.
+      - id: set-message-body
+        type: move
         from: body.msg
-        to: log.message
-        
-      # 4. Remove the remaining structured body (optional, but cleaner)
-      - id: remove-body
+        to: body
+
+      # 4. FIX for 'invalid keys: fields': Use singular 'field' key for removal.
+      - id: remove-original-ts
         type: remove
-        field: body
+        field: body.ts 
+
+      # 5. Remove the 'level' field
+      - id: remove-level
+        type: remove
+        field: body.level
 
 processors:
   batch:
@@ -870,12 +871,9 @@ processors:
 exporters:
   otlp/elastic:
     endpoint: "http://apm-server:8200"
-    # For a secured APM Server, configure headers (API keys) and TLS appropriately.
-    # headers:
-    #   "Authorization": "ApiKey <YOUR_API_KEY>"
 
   logging:
-    loggevel: info
+    loglevel: info
 
 service:
   pipelines:
@@ -890,8 +888,8 @@ service:
       exporters: [otlp/elastic, logging]
 
     logs:
-      receivers: [filelog] # Only filelog here; OTLP logs would typically be used for complex log streams
-      processors: [batch, attributes] # Use the attributes processor to add service.instance.id
+      receivers: [filelog] 
+      processors: [batch, attributes] 
       exporters: [otlp/elastic, logging]
 
 ```
