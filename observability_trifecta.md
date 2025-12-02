@@ -1025,7 +1025,7 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors" // <--- ADDED: Needed for errors.New
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -1039,8 +1039,7 @@ import (
 
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/codes" // <--- ADDED: Needed for codes.Error
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	sdkresource "go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -1048,6 +1047,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+// ... (Prometheus metrics var definitions stay the same) ...
 var (
 	reqs = prometheus.NewCounterVec(
 		prometheus.CounterOpts{Name: "example_requests_total", Help: "Total requests"},
@@ -1063,7 +1063,7 @@ func init() {
 	prometheus.MustRegister(reqs, reqDur)
 }
 
-// Simple JSON logger that writes to /var/log/app/app.log
+// ... (Logger functions stay the same) ...
 func newJSONLogger(path string) *log.Logger {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
@@ -1081,13 +1081,13 @@ func mustJSON(m map[string]interface{}) string {
 	return string(b)
 }
 
+// ... (Tracer init stays the same) ...
 func initTracer(ctx context.Context) (*sdktrace.TracerProvider, error) {
 	endpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
 	if endpoint == "" {
 		endpoint = "http://localhost:4318"
 	}
 
-	// FIX: Strip the scheme (http:// or https://) because WithEndpoint expects host:port
 	if strings.HasPrefix(endpoint, "http://") {
 		endpoint = strings.TrimPrefix(endpoint, "http://")
 	} else if strings.HasPrefix(endpoint, "https://") {
@@ -1095,20 +1095,17 @@ func initTracer(ctx context.Context) (*sdktrace.TracerProvider, error) {
 	}
 
 	exporter, err := otlptracehttp.New(ctx,
-		otlptracehttp.WithEndpoint(endpoint), // otlptracehttp expects host:port
-		otlptracehttp.WithInsecure(),         // Used unconditionally for simplicity
+		otlptracehttp.WithEndpoint(endpoint),
+		otlptracehttp.WithInsecure(),
 	)
 	if err != nil {
 		return nil, err
 	}
 
-	attributes := []attribute.KeyValue{
-		semconv.ServiceName("example-go-app"),
-	}
-
 	res := sdkresource.NewWithAttributes(
 		semconv.SchemaURL,
-		attributes...,
+		semconv.ServiceName("example-go-app"),
+		semconv.ServiceVersion("1.0.0"),
 	)
 
 	tp := sdktrace.NewTracerProvider(
@@ -1133,27 +1130,42 @@ func main() {
 
 	r.Handle("/metrics", promhttp.Handler())
 
-	// --- NEW ERROR ROUTE ---
+	// 1. ROUTE: /error (Explicit Error)
 	r.Get("/error", func(w http.ResponseWriter, r *http.Request) {
-		// Get the current span
 		span := trace.SpanFromContext(r.Context())
+		
+		// FIX: Rename the span so Kibana shows "GET /error" instead of "server"
+		span.SetName("GET /error")
 
-		// Create a real Go error
-		err := errors.New("something went terribly wrong in the database")
-
-		// 1. Record the error in the trace (This creates the "Exception" event with stack trace)
+		err := errors.New("database connection failed")
+		
+		// Record the stack trace
 		span.RecordError(err, trace.WithStackTrace(true))
-
-		// 2. Set the status of the span to Error so it turns red in APM
-		span.SetStatus(codes.Error, "critical failure")
+		span.SetStatus(codes.Error, "database failure")
 
 		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprint(w, "Check Kibana for the stack trace!")
+		fmt.Fprint(w, "Explicit Error Triggered")
 	})
 
+	// 2. ROUTE: /panic (Hard Crash)
+	r.Get("/panic", func(w http.ResponseWriter, r *http.Request) {
+		span := trace.SpanFromContext(r.Context())
+		
+		// FIX: Rename the span
+		span.SetName("GET /panic")
+
+		// Simulate a crash. otelhttp middleware will catch this!
+		panic("application crashed due to nil pointer dereference!")
+	})
+
+	// 3. ROUTE: / (Standard)
 	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
+		span := trace.SpanFromContext(r.Context())
+		
+		// FIX: Rename the span
+		span.SetName("GET /")
+
 		start := time.Now()
-		// simulated work
 		time.Sleep(50 * time.Millisecond)
 
 		status := 200
@@ -1169,33 +1181,33 @@ func main() {
 		reqs.WithLabelValues(r.URL.Path, fmt.Sprintf("%d", status)).Inc()
 		reqDur.WithLabelValues(r.URL.Path).Observe(dur)
 
-		spanContext := trace.SpanFromContext(r.Context()).SpanContext()
+		spanContext := span.SpanContext()
 		traceID := ""
 		spanID := ""
-
 		if spanContext.IsValid() {
 			traceID = spanContext.TraceID().String()
 			spanID = spanContext.SpanID().String()
 		}
-		// Log structured JSON — include trace information if available
+
 		fields := map[string]interface{}{
-			"ts":     time.Now().UTC().Format(time.RFC3339Nano),
-			"level":  "info",
-			"msg":    "handled request",
-			"method": r.Method,
-			"path":   r.URL.Path,
-			"status": status,
-			"dur":    dur,
-			// Add standard Elastic/OTel correlation fields
+			"ts":       time.Now().UTC().Format(time.RFC3339Nano),
+			"level":    "info",
+			"msg":      "handled request",
+			"method":   r.Method,
+			"path":     r.URL.Path,
+			"status":   status,
+			"dur":      dur,
 			"trace.id": traceID,
 			"span.id":  spanID,
-			"trace_id": traceID, // redundancy for different backend parsers
+			"trace_id": traceID,
 		}
 		logJSON(logger, fields)
 	})
 
-	// wrap router with otelhttp so traces are created for requests
+	// Wrap router with otelhttp. 
+	// We pass "server" as a fallback name, but we override it inside the handlers.
 	wrapped := otelhttp.NewHandler(r, "server")
+	
 	srv := &http.Server{Addr: ":8080", Handler: wrapped}
 
 	log.Printf("starting app on :8080")
@@ -1203,6 +1215,58 @@ func main() {
 		log.Fatalf("server failed: %v", err)
 	}
 }
+
+
+```
+- generate traffic to test the app:
+
+```bash
+#!/bin/bash
+
+# Configuration
+URL="http://localhost:8080"
+DELAY=0.2 # Seconds between requests
+
+# Colors
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+echo -e "${GREEN}Starting Traffic Generator...${NC}"
+echo -e "Target: $URL"
+echo -e "Press [CTRL+C] to stop.\n"
+
+while true; do
+  # Generate a random number between 1 and 100
+  CHANCE=$((1 + $RANDOM % 100))
+
+  if [ $CHANCE -le 80 ]; then
+    # --- 80% Chance: Normal Traffic (GET /) ---
+    # Captures HTTP status code
+    STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL/")
+    
+    if [ "$STATUS" == "200" ]; then
+        echo -e "${GREEN}[OK]${NC}   GET /      -> $STATUS"
+    else
+        # This catches the random "time % 11" 500 errors inside your main route
+        echo -e "${YELLOW}[WARN]${NC} GET /      -> $STATUS (Random Internal Error)"
+    fi
+
+  elif [ $CHANCE -le 95 ]; then
+    # --- 15% Chance: Explicit Error (GET /error) ---
+    STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL/error")
+    echo -e "${RED}[ERR]${NC}  GET /error -> $STATUS (Simulated DB Failure)"
+
+  else
+    # --- 5% Chance: Hard Crash (GET /panic) ---
+    STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL/panic")
+    echo -e "${RED}[CRASH]${NC} GET /panic -> $STATUS (Application Panic!)"
+  fi
+
+  # Sleep slightly to prevent flooding your terminal too fast
+  sleep $DELAY
+done
 
 
 ```
