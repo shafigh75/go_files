@@ -835,7 +835,6 @@ receivers:
         type: json_parser
 
       # 2. Map the application's 'ts' field (timestamp) to an attribute.
-      # FIX for 'unrecognized prefix': We map to 'attributes.timestamp' instead of the root 'timestamp' field.
       - id: move-ts-to-attribute
         type: move
         from: body.ts
@@ -847,7 +846,7 @@ receivers:
         from: body.msg
         to: body
 
-      # 4. FIX for 'invalid keys: fields': Use singular 'field' key for removal.
+      # 4. Use singular 'field' key for removal
       - id: remove-original-ts
         type: remove
         field: body.ts 
@@ -871,6 +870,8 @@ processors:
 exporters:
   otlp/elastic:
     endpoint: "http://apm-server:8200"
+    # CRITICAL FIX: Explicitly set protocol to HTTP to avoid the TLS handshake error.
+    protocol: http
 
   logging:
     loglevel: info
