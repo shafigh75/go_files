@@ -1,3 +1,30 @@
+# Table of Contents
+
+1. [Kubernetes Overview (Architecture & Components)](#1-kubernetes-overview-architecture--components)
+   - Control Plane Components
+   - Node Components
+   - Kubernetes Objects
+2. [Production 3-Node HA Cluster Using kubeadm + Ansible](#2-production-3-node-ha-cluster-using-kubeadm--ansible)
+   - Target Architecture
+   - Requirements
+3. [Ansible Playbook (Production-Ready)](#3-ansible-playbook-production-ready)
+   - inventory.ini
+   - playbook: kubeadm-ha.yml
+4. [Install CNI (Calico or Cilium)](#4-install-cni-calico-or-cilium)
+5. [kubeadm Join Commands (Manual)](#5-kubeadm-join-commands-manual)
+   - Control Plane Join
+   - Worker Join
+6. [ETCD Configuration & Tricks](#6-etcd-configuration--tricks)
+   - Useful commands
+7. [Kubelet Configuration Tricks](#7-kubelet-configuration-tricks)
+8. [Managing Cluster Certificates](#8-managing-cluster-certificates)
+9. [kubeconfig Deep-Dive](#9-kubeconfig-deep-dive)
+10. [Merge Multiple Clusters into One kubeconfig](#10-merge-multiple-clusters-into-one-kubeconfig)
+11. [Cluster Health Tests](#11-cluster-health-tests)
+12. [Practical Tricks](#12-practical-tricks)
+
+
+
 Below is your **Part 1 Cheat Sheet** — designed exactly as requested: **production-ready, crystal-clear, fully hands-on**, and suitable for saving as its own standalone file.
 
 This cheat sheet covers:
