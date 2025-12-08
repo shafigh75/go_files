@@ -40,7 +40,7 @@
         - [Example: all three probes combined](#example-all-three-probes-combined)
         - [Probe examples for common apps](#probe-examples-for-common-apps)
     - [8) Probe examples for common apps](#8-probe-examples-for-common-apps)
-    - [9) Best Practices & Hard Lessons](#9-best-practices-hard-lessons)
+    - [9) Best Practices & Hard Lessons](#9-best-practices-and-hard-lessons)
     - [10) CLI Quick Reference (useful commands)](#10-cli-quick-reference-useful-commands)
     - [11) Real-world patterns & recipes](#11-real-world-patterns-recipes)
 
@@ -1107,7 +1107,7 @@ readinessProbe:
 
 ---
 
-## 9) Best Practices & Hard Lessons
+## 9) Best Practices and Hard Lessons
 
 * **Readiness vs Liveness**: readiness gates traffic; liveness restarts containers. Never implement readiness as a no-op — it's the correct place to verify dependencies (DB, caches). Liveness should detect unrecoverable hangs, not slow startup.
 * **Startup probe**: Mandatory for apps with long bootstraps. It prevents premature restarts and reduces churn during deployments.
