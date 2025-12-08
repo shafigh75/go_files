@@ -1,3 +1,52 @@
+
+# Table of Contents
+
+- [Part 3 — Kubernetes Component Bible](#part-3-kubernetes-component-bible)
+    - [1 — Pod (fundamental unit)](#1-pod-fundamental-unit)
+    - [2 — ReplicaSet (low level; usually managed by Deployment)](#2-replicaset-low-level-usually-managed-by-deployment)
+    - [3 — Deployment (recommended for stateless apps)](#3-deployment-recommended-for-stateless-apps)
+        - [Deployment strategies — quick guide](#deployment-strategies-quick-guide)
+    - [4 — StatefulSet (stateful apps: stable network ID + stable storage)](#4-statefulset-stateful-apps-stable-network-id-stable-storage)
+    - [5 — DaemonSet (run copy on each node or subset)](#5-daemonset-run-copy-on-each-node-or-subset)
+    - [6 — Job & CronJob (batch work)](#6-job-cronjob-batch-work)
+    - [7 — Service (ClusterIP / NodePort / LoadBalancer / ExternalName)](#7-service-clusterip-nodeport-loadbalancer-externalname)
+    - [8 — Ingress (Ingress-NGINX example with annotation hints)](#8-ingress-ingress-nginx-example-with-annotation-hints)
+    - [9 — Gateway API (modern replacement for Ingress) — Gateway + HTTPRoute example](#9-gateway-api-modern-replacement-for-ingress-gateway-httproute-example)
+    - [10 — ConfigMap & Secret (configuration & sensitive data)](#10-configmap-secret-configuration-sensitive-data)
+    - [11 — PersistentVolume, PersistentVolumeClaim & StorageClass]((#11-persistentvolume-persistentvolumeclaim-storageclass)
+    - [12 — Horizontal Pod Autoscaler (HPA) — v2 with custom metric example](#12-horizontal-pod-autoscaler-hpa-v2-with-custom-metric-example)
+    - [13 — Vertical Pod Autoscaler (VPA) — example (recommends or updates)](#13-vertical-pod-autoscaler-vpa-example-recommends-or-updates)
+    - [14 — PodDisruptionBudget (PDB) — protect during voluntary disruptions](#14-poddisruptionbudget-pdb-protect-during-voluntary-disruptions)
+    - [15 — ServiceAccount & RBAC (Role, RoleBinding, ClusterRole, ClusterRoleBinding)](#15-serviceaccount-rbac-role-rolebinding-clusterrole-clusterrolebinding)
+    - [16 — TLS: Kubernetes TLS Secret (used by Ingress/Gateway)](#16-tls-kubernetes-tls-secret-used-by-ingressgateway)
+    - [17 — Certificate management (kubeadm-managed notes)](#17-certificate-management-kubeadm-managed-notes)
+    - [18 — Advanced & Misc components](#18-advanced-misc-components)
+        - [RuntimeClass](#runtimeclass)
+        - [NetworkPolicy (deny-by-default example)](#networkpolicy-deny-by-default-example)
+    - [19 — Comments about common options & trade-offs](#19-comments-about-common-options-trade-offs)
+    - [20 — How to annotate & comment your manifests for teams (best practice)](#20-how-to-annotate-comment-your-manifests-for-teams-best-practice)
+    - [21 — Quick manifest snippets for “everyday” tasks](#21-quick-manifest-snippets-for-everyday-tasks)
+        - [Sources / further reading](#sources-further-reading)
+- [Affinity, Anti-Affinity, Taints/Tolerations & Probes — Practical Reference](#affinity-anti-affinity-taintstolerations-probes-practical-reference)
+    - [1) Node Affinity (schedule pods onto nodes with matching labels)](#1-node-affinity-schedule-pods-onto-nodes-with-matching-labels)
+    - [2) Pod Affinity (co-locate pods — useful for locality / caching)](#2-pod-affinity-co-locate-pods-useful-for-locality-caching)
+    - [3) Pod Anti-Affinity (spread replicas across failure domains)](#3-pod-anti-affinity-spread-replicas-across-failure-domains)
+    - [4) TopologySpreadConstraints (balanced spreading across nodes/zones)](#4-topologyspreadconstraints-balanced-spreading-across-nodeszones)
+    - [5) Taints & Tolerations (protect nodes or dedicate them)](#5-taints-tolerations-protect-nodes-or-dedicate-them)
+    - [6) Combining nodeAffinity + tolerations (dedicated GPU pods)](#6-combining-nodeaffinity-tolerations-dedicated-gpu-pods)
+    - [7) Liveness, Readiness, Startup Probes — Methods & Best Practices](#7-liveness-readiness-startup-probes-methods-best-practices)
+        - [Probe types supported](#probe-types-supported)
+        - [Generic probe fields](#generic-probe-fields)
+        - [Example: all three probes combined](#example-all-three-probes-combined)
+        - [Probe examples for common apps](#probe-examples-for-common-apps)
+    - [8) Probe examples for common apps]((#8-probe-examples-for-common-apps)
+    - [9) Best Practices & Hard Lessons](#9-best-practices-hard-lessons)
+    - [10) CLI Quick Reference (useful commands)](#10-cli-quick-reference-useful-commands)
+    - [11) Real-world patterns & recipes](#11-real-world-patterns-recipes)
+
+
+
+
 # Part 3 — **Kubernetes Component Bible**
 
 A practical, line-commented manifest collection + concise explanation for each core and advanced Kubernetes component.
