@@ -54,7 +54,7 @@ The inventory is the most fundamental part of your Ansible setup.
 
 Ini, TOML
 
-```
+```toml
 # inventory.ini
 
 # Group for web servers
@@ -87,7 +87,7 @@ Always use a local `ansible.cfg` file in your project directory to define execut
 
 Ini, TOML
 
-```
+```toml
 [defaults]
 inventory = ./inventory.ini
 remote_user = devops_user
@@ -119,7 +119,7 @@ This playbook demonstrates an **idempotent** (re-runnable without unintended sid
 
 YAML
 
-```
+```yaml
 ---
 # File: setup_web.yml
 
@@ -204,7 +204,7 @@ The `setup_web.yml` example above is typically replaced by calling a role:
 
 YAML
 
-```
+```yaml
 # File: site.yml (main playbook)
 
 - name: Deploy the full application stack
@@ -231,7 +231,7 @@ When a built-in module doesn't exist for a specific, proprietary task (e.g., int
 
 Bash
 
-```
+```bash
 # In your project root
 mkdir library
 # The module file will go here: library/custom_status_check.py
@@ -244,7 +244,7 @@ This is a minimal, production-ready Python template for a custom module that che
 
 Python
 
-```
+```python
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 
@@ -330,7 +330,7 @@ You use your custom module exactly like a built-in module, using its file name w
 
 YAML
 
-```
+```yaml
 - name: Use the custom module to verify critical service status
   hosts: all
   tasks:
@@ -381,7 +381,7 @@ Encrypt your production variables file and include the sensitive data there.
 
 Bash
 
-```
+```bash
 # Encrypt the production variables file
 ansible-vault encrypt group_vars/prod/vault.yml
 
@@ -391,7 +391,7 @@ ansible-vault encrypt group_vars/prod/vault.yml
 
 YAML
 
-```
+```yaml
 # Only visible after decryption
 prod_db_password: "MySuperSecurePassword123"
 aws_access_key: "AKIAIOSFODNN7EXAMPLE"
@@ -404,7 +404,7 @@ The variable is automatically decrypted at runtime:
 
 YAML
 
-```
+```yaml
 - name: Deploy application with secret environment variables
   hosts: webservers
   tasks:
@@ -424,7 +424,7 @@ In a production environment, you should use a **vault password file** instead of
 
 Bash
 
-```
+```bash
 # Create a password file (ensure this file is very secure or outside source control!)
 # Recommended: use a secure secrets manager (like HashiCorp Vault, AWS Secrets Manager)
 # to fetch the password into this file at runtime in your CI/CD pipeline.
@@ -447,7 +447,7 @@ Use the `block` structure for transaction-like execution.
 
 YAML
 
-```
+```yaml
 - name: Attempt critical operation with guaranteed cleanup
   hosts: target_servers
   tasks:
@@ -485,7 +485,7 @@ You can override Ansible's default failure behavior (non-zero return code) for s
 
 YAML
 
-```
+```yaml
 - name: Run a cleanup script that sometimes fails but is safe to ignore
   ansible.builtin.command: /usr/local/bin/run_cleanup_script.sh
   # This task will ONLY fail if the exit code is > 2, otherwise it's considered successful
@@ -500,7 +500,7 @@ Always use the `debug` module to inspect variables and execution flow.
 
 YAML
 
-```
+```yaml
 - name: Register and inspect the result of a command
   ansible.builtin.command: cat /etc/os-release
   register: os_info
@@ -530,7 +530,7 @@ The `when` clause executes a task only if a given condition is met. This conditi
 
 YAML
 
-```
+```yaml
 - name: Apply OS-specific package installation
   hosts: all
   become: yes
@@ -568,7 +568,7 @@ Loops are essential for repetitive tasks, such as creating multiple users or ins
 
 YAML
 
-```
+```yaml
 - name: Install a required list of packages
   hosts: all
   become: yes
@@ -591,7 +591,7 @@ Using a dictionary allows you to define multiple properties per item in the loop
 
 YAML
 
-```
+```yaml
 # In group_vars/all/users.yml
 app_users:
   - name: application_admin
@@ -644,7 +644,7 @@ db_password = {{ vault_db_password | b64encode }}
 
 YAML
 
-```
+```yaml
 - name: Deploy the configuration file using the template
   hosts: webservers
   vars:
@@ -728,7 +728,7 @@ Manages system services (abstracts `systemd`, `init.d`, etc.).
 
 YAML
 
-```
+```yaml
 - name: Check server uptime (simple command)
   ansible.builtin.command: /usr/bin/uptime
   register: uptime_result
@@ -743,7 +743,7 @@ YAML
 
 YAML
 
-```
+```yaml
 - name: Compress web logs and delete old ones (requires shell piping and globbing)
   ansible.builtin.shell: |
     # Use | for readability (multi-line shell script)
@@ -769,7 +769,7 @@ This structure leverages **Roles**, **Inventory Variables (`group_vars`)**, and 
 
 ### 8.1. Project Directory Structure
 
-```
+```bash
 ansible-project/
 ├── ansible.cfg                          # 1. Project-specific Ansible settings
 ├── inventory.ini                        # 2. Static inventory file
@@ -804,7 +804,7 @@ ansible-project/
 
 Ini, TOML
 
-```
+```toml
 [defaults]
 inventory = ./inventory.ini
 roles_path = ./roles
@@ -817,7 +817,7 @@ stdout_callback = yaml
 
 Ini, TOML
 
-```
+```toml
 [webservers]
 web01
 web02
@@ -835,7 +835,7 @@ databases
 
 YAML
 
-```
+```yaml
 ---
 # File: site.yml - The main playbook to deploy the entire application stack
 
@@ -860,7 +860,7 @@ YAML
 
 YAML
 
-```
+```yaml
 ---
 # File: roles/web_server/tasks/main.yml
 
@@ -959,7 +959,7 @@ Paste the following basic structure into `library/http_status_check.py`:
 
 Python
 
-```
+```python
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 
@@ -1083,7 +1083,7 @@ You can now use this module to verify deployments in a testing stage of your pip
 
 YAML
 
-```
+```yaml
 ---
 # File: verify_deployment.yml
 
@@ -1145,7 +1145,7 @@ Inserts or replaces a multi-line block of text, marked by unique start/end marke
 
 YAML
 
-```
+```yaml
 - name: Ensure SSH PermitRootLogin is set to 'no'
   ansible.builtin.lineinfile:
     path: /etc/ssh/sshd_config
@@ -1163,7 +1163,7 @@ YAML
 
 YAML
 
-```
+```yaml
 - name: Add a custom VirtualHost block to Apache config
   ansible.builtin.blockinfile:
     path: /etc/httpd/conf/httpd.conf
@@ -1186,7 +1186,7 @@ The `uri` module is used for making HTTP/S requests, crucial for interacting wit
 
 YAML
 
-```
+```yaml
 - name: POST a message to a notification service upon successful deployment
   # This task relies on the successful execution of prior tasks
   ansible.builtin.uri:
@@ -1213,7 +1213,7 @@ Essential for deploying applications and configuration from version control.
 
 YAML
 
-```
+```yaml
 - name: Deploy the application code from GitLab
   ansible.builtin.git:
     # URL (can contain vault variables for SSH keys or tokens)
@@ -1238,7 +1238,7 @@ Beyond simple variable printing, `debug` can show complex object structures.
 
 YAML
 
-```
+```yaml
 - name: Show all variables available to the current host
   ansible.builtin.debug:
     # Use the 'vars' magic variable
@@ -1305,7 +1305,7 @@ YAML
 
 YAML
 
-```
+```yaml
 - name: Archive old logs before cleanup (on the managed node)
   ansible.builtin.archive:
     path: /var/log/app/*.log
@@ -1342,7 +1342,7 @@ Manages APT repositories on Debian/Ubuntu systems.
 
 YAML
 
-```
+```yaml
 - name: Add NGINX stable repository key and source
   hosts: webservers
   when: ansible_os_family == "Debian"
@@ -1386,7 +1386,7 @@ Manages `ufw` (common on Debian/Ubuntu).
 
 YAML
 
-```
+```yaml
 - name: Open production web server ports on RHEL systems
   hosts: webservers
   when: ansible_os_family == "RedHat"
@@ -1418,7 +1418,7 @@ If you need to inject the literal content of a certificate or private key into a
 
 YAML
 
-```
+```yaml
 - name: Deploy an SSL certificate using file lookup
   hosts: webservers
   vars:
