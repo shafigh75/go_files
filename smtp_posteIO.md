@@ -752,3 +752,114 @@ You now have a totally separate mail system.
 1.  Emails sent to `info@myapp.net` -> arrive at **Hostinger**.
 2.  Emails sent from your App -> come from `admin@mail.myapp.net` via your **VPS**.
 3.  **Zero Conflict.**
+
+
+
+# test script:
+this script tests sending using smtp and append the message in the sent folder using IMAP:
+
+```python
+import smtplib
+import imaplib
+import email
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from email.utils import formatdate
+import ssl
+
+# ======================
+# Configuration
+# ======================
+SMTP_SERVER = "mail.halldevelopers.com"
+SMTP_PORT = 587
+
+IMAP_SERVER = "mail.halldevelopers.com"
+IMAP_PORT = 993
+
+USERNAME = "noreply@mail.halldevelopers.com"
+PASSWORD = "vQe33utwTW"
+
+FROM_EMAIL = USERNAME
+TO_EMAIL = "shafigh75@gmail.com"
+
+# ======================
+# Create Email Message
+# ======================
+msg = MIMEMultipart()
+msg["From"] = FROM_EMAIL
+msg["To"] = TO_EMAIL
+msg["Subject"] = "Test Email from Python App - IMAP Synced"
+msg["Date"] = formatdate(localtime=True)
+from email.utils import make_msgid
+msg["Message-ID"] = make_msgid()
+
+body = "Hello!\n\nThis email was sent via SMTP and stored in Sent using IMAP.\n\nRegards,\nMohammad"
+msg.attach(MIMEText(body, "plain"))
+
+raw_message = msg.as_bytes()
+
+# ======================
+# Send via SMTP
+# ======================
+smtp = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
+smtp.starttls()
+smtp.login(USERNAME, PASSWORD)
+smtp.sendmail(FROM_EMAIL, [TO_EMAIL], raw_message)
+smtp.quit()
+
+print("SMTP send: OK")
+
+
+import re
+
+# ======================
+# Save to Sent via IMAP (FIXED)
+# ======================
+imap = imaplib.IMAP4_SSL(IMAP_SERVER, IMAP_PORT)
+imap.login(USERNAME, PASSWORD)
+
+status, mailboxes = imap.list()
+sent_folder = None
+
+for mailbox in mailboxes:
+    line = mailbox.decode()
+
+    # Look for the \Sent flag (RFC standard)
+    if r'\Sent' in line:
+        # Extract last quoted or unquoted mailbox name
+        match = re.search(r'"([^"]+)"$', line)
+        if match:
+            sent_folder = match.group(1)
+        else:
+            # Fallback: last space-separated token
+            sent_folder = line.split()[-1]
+        break
+
+# Absolute fallback for poste.io
+if not sent_folder:
+    for candidate in ("Sent", "INBOX.Sent", "Sent Items"):
+        try:
+            imap.select(candidate)
+            sent_folder = candidate
+            break
+        except:
+            pass
+
+if not sent_folder:
+    raise RuntimeError("Sent folder not found via IMAP")
+
+# Append message
+imap.append(
+    sent_folder,
+    '\\Seen',
+    imaplib.Time2Internaldate(
+        email.utils.parsedate_to_datetime(msg["Date"])
+    ),
+    raw_message
+)
+
+imap.logout()
+
+print(f"IMAP append OK → {sent_folder}")
+
+```
