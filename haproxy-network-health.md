@@ -320,3 +320,190 @@ echo "======================================"
 echo "DONE"
 echo "======================================"
 ```
+
+# An Explanation of some important kernel flags: (numbers pertain to our own incident but the general description is a fine addon)
+
+## Critical Drifts First
+
+Three values stand out as genuinely problematic for your situation:
+
+**1. `tcp_max_tw_buckets = 16384` — too small**
+You had 378 TIME_WAIT sockets observed, which is fine *right now*, but with 120K active connections this bucket will fill under any churn spike and the kernel will start forcibly destroying TIME_WAIT sockets and logging warnings. At your scale this should be at least 1,000,000.
+
+**2. `tcp_fin_timeout = 60` — too long**
+60 seconds means a dead connection's FD is held for a full minute before cleanup. With 120K connections, even a 5% churn rate means thousands of FDs stuck in FIN_WAIT_2 for a minute each. At your FD pressure level (60% consumed), this is directly contributing to the problem. Should be 15.
+
+**3. `tcp_keepalive_time = 7200` — dangerously long**
+7200 seconds = 2 hours before the kernel sends the first keepalive probe on an idle connection. In a Flutter mobile app context, phones go to sleep, switch networks, and drop connections silently all the time. HAProxy and your Go backend will hold FDs open for up to 2 hours for connections that are already dead on the client side. Should be 60.
+
+The rest are acceptable or minor. `somaxconn` and `tcp_max_syn_backlog` at 65535 are already good — your ListenOverflow problem was likely a previous state or a HAProxy `maxconn` ceiling, not the kernel queue size.
+
+---
+
+## Each Flag Explained
+
+---
+
+### `net.core.somaxconn = 65535` ✅
+**What it is:** The maximum length of the pending connection queue for any listening socket — specifically connections that have completed the TCP 3-way handshake and are waiting for the application (HAProxy) to call `accept()`.
+
+**What happens when it's too small:** The kernel drops incoming connections silently. This is exactly what caused your 28M `ListenOverflows`. The kernel fills this queue, then starts discarding new fully-established connections before HAProxy even sees them.
+
+**Analogy:** A restaurant has a waiting area for seated-but-not-yet-served customers. `somaxconn` is how many chairs are in that waiting area. If it's full, new customers are turned away at the door even though tables exist.
+
+**Your value:** 65535 is good. No change needed.
+
+---
+
+### `net.ipv4.tcp_max_syn_backlog = 65535` ✅
+**What it is:** The queue for *half-open* connections — SYN received, SYN-ACK sent, but the final ACK from the client hasn't arrived yet (the TCP handshake is mid-flight).
+
+**What happens when it's too small:** Under a SYN flood or simply high connection rate, the kernel drops incoming SYNs before the handshake completes. Clients see connection timeouts immediately.
+
+**How it differs from somaxconn:** `somaxconn` is for completed handshakes waiting for `accept()`. `tcp_max_syn_backlog` is for handshakes still in progress. Two separate queues, two separate failure modes.
+
+**Your SYN_RECV count was 1** — meaning this queue is essentially empty. Your value is fine.
+
+---
+
+### `net.core.netdev_max_backlog = 1000` ⚠️ minor
+**What it is:** How many packets the kernel can queue on a NIC's receive ring when the CPU can't process them fast enough. This is per CPU core.
+
+**What happens when it's too small:** At very high packet rates, the NIC fills this buffer and starts dropping packets at the driver level — before they even reach TCP. You'd see this in `ifconfig` as RX dropped or in `ethtool -S` as missed errors.
+
+**Your traffic:** 9,878 rx packets/sec. At 1,000 per core this is probably fine unless you have a single-core bottleneck. Recommended 32,768 at your scale but not urgent.
+
+---
+
+### `net.core.rmem_max = 212992` ⚠️ low
+**What it is:** The absolute maximum a socket's receive buffer can be set to. This is the ceiling — individual sockets won't exceed this regardless of what the application requests.
+
+**What it affects:** How much unread incoming data the kernel can hold per socket before telling the sender to slow down (TCP flow control / window size). A small value means the kernel throttles the sender earlier than necessary, which hurts throughput on high-latency connections.
+
+**Example:** A Flutter client on a mobile network with 80ms RTT trying to download a 1MB response. With 212KB buffer, the kernel's TCP window is constrained, so the Go backend has to stop sending and wait for ACKs more frequently. With 16MB buffer, it can pipeline much more data in flight.
+
+**For your setup:** Flutter clients on mobile networks will benefit from larger buffers. Recommended 16777216 (16MB).
+
+---
+
+### `net.core.wmem_max = 212992` ⚠️ low
+**What it is:** Same concept as `rmem_max` but for the send buffer. How much outgoing data the kernel can hold per socket waiting to be transmitted.
+
+**What it affects:** HAProxy and your Go backend's ability to pipeline responses. Small send buffers mean the server fills the buffer, blocks, waits for ACKs, then continues — creating unnecessary latency cycles.
+
+**Your value:** 212KB is the kernel default and is fine for LAN. For mobile clients with variable latency it's a bottleneck. Recommended 16777216.
+
+---
+
+### `net.ipv4.tcp_rmem = 4096 131072 30573920` ✅ mostly fine
+**What it is:** Three values — minimum, default, and maximum receive buffer size per TCP socket. The kernel auto-tunes between min and max based on memory pressure.
+
+```
+4096      = minimum (4KB  — floor, used under memory pressure)
+131072    = default  (128KB — starting size for new sockets)
+30573920  = maximum  (29MB  — kernel can grow up to this)
+```
+
+**What it does:** The kernel automatically scales each socket's buffer based on observed RTT and bandwidth. A connection to a fast LAN client gets a smaller buffer; a slow mobile client gets a larger one. This is called TCP autotuning.
+
+**Your value:** The max of 29MB is generous. Fine as-is, though the default of 128KB could be raised to 262144 if you notice slow starts on new connections.
+
+---
+
+### `net.ipv4.tcp_wmem = 4096 16384 4194304` ⚠️ low max
+**What it is:** Same structure as `tcp_rmem` but for send buffers.
+
+```
+4096     = minimum  (4KB)
+16384    = default  (16KB)
+4194304  = maximum  (4MB)
+```
+
+**The problem:** Your max send buffer is only 4MB while your max receive buffer is 29MB. This asymmetry means you can receive data faster than you can send it. For a server that's primarily *sending* responses to Flutter clients, the send buffer ceiling matters more. Recommended max: 16777216 (16MB).
+
+---
+
+### `net.ipv4.tcp_max_tw_buckets = 16384` 🔴 critical
+**What it is:** How many TIME_WAIT sockets the kernel will maintain simultaneously. TIME_WAIT is the state a connection enters after being closed — it persists for 2×MSL (typically 60 seconds) to catch any delayed packets.
+
+**What happens when exceeded:** The kernel destroys the oldest TIME_WAIT socket to make room for the new one and logs: `TCP: time wait bucket table overflow`. That destroyed socket's port becomes immediately reusable, which can cause a new connection to accidentally receive a delayed packet from the old connection — data corruption.
+
+**Your risk:** You have 120K active connections. Even at 1% close rate per second that's 1,200 connections/sec entering TIME_WAIT. Your bucket fills in about 13 seconds and starts overflowing. Set to 1,440,000.
+
+---
+
+### `net.ipv4.tcp_tw_reuse = 2` ✅
+**What it is:** Controls whether the kernel can reuse a TIME_WAIT socket for a new *outgoing* connection.
+- `0` = disabled
+- `1` = enabled
+- `2` = enabled only for loopback (safer default since Linux 4.6)
+
+**What it does:** When HAProxy opens a new connection to your Go backend (which is local/loopback in many setups), it can reuse a port that's in TIME_WAIT instead of waiting 60 seconds for it to expire naturally. This expands the effective outbound port range.
+
+**Your value:** 2 is the safe modern default. Fine as-is.
+
+---
+
+### `net.ipv4.tcp_fin_timeout = 60` 🔴 critical for your FD situation
+**What it is:** How long the kernel keeps a socket in FIN_WAIT_2 state. FIN_WAIT_2 happens when your side has closed the connection but the remote side hasn't sent its FIN yet — the connection is half-closed.
+
+**Why it matters for FDs:** A socket in FIN_WAIT_2 still holds an FD. At 120K connections, if even 5% are in slow-close states, that's 6,000 FDs stuck for 60 seconds each. With your FD ceiling pressure, these dead FDs are directly competing with real connections.
+
+**Example:** A Flutter user switches from WiFi to 4G mid-session. The TCP connection goes dead — no RST, no FIN, just silence. HAProxy starts the close, sends FIN, gets nothing back. That socket sits in FIN_WAIT_2 for 60 seconds consuming an FD. With 16 set instead, it's cleaned up in 15 seconds.
+
+**Change to:** 15
+
+---
+
+### `net.ipv4.ip_local_port_range = 32768 60999` ⚠️ worth expanding
+**What it is:** The range of ephemeral ports the kernel can use for *outbound* connections. Every connection HAProxy opens toward your Go backend uses one port from this range.
+
+**The math:** 60999 - 32768 = 28,231 available ports. If HAProxy has 60K connections to the backend, and each needs a unique source port, you'd exhaust this range. In practice `tw_reuse` and connection pooling help, but the range is still tight.
+
+**Change to:** `1024 65535` — giving you 64,511 ports. Avoid going below 1024 (reserved for privileged services).
+
+---
+
+### `net.ipv4.tcp_retries2 = 15` ⚠️ too patient
+**What it is:** How many times the kernel retransmits a packet on an established connection before giving up and killing the socket. Each retry doubles the timeout (exponential backoff), so 15 retries can mean waiting up to **~30 minutes** before a dead connection is declared dead.
+
+**Why this hurts you:** A dead Flutter client (phone off, network gone) leaves a connection in your Go backend and HAProxy holding FDs. With 15 retries, those zombie connections survive for potentially 30 minutes. With 8 retries, ~8-10 minutes. Combined with the keepalive fix, dead connections get cleaned up much faster.
+
+---
+
+### `net.ipv4.tcp_syn_retries = 6` ⚠️ slightly high
+**What it is:** How many times the kernel retries a SYN packet when making an outgoing connection (HAProxy → backend). Retry 1 waits 1s, retry 2 waits 2s, retry 3 waits 4s... exponential. At 6 retries that's up to 63 seconds before declaring a backend unreachable.
+
+**For your setup:** Your Go backend is local. If it's not responding in 3 retries (~7 seconds), it's down. HAProxy's own `timeout connect` should catch this first, but kernel-level 6 retries is still wasteful. Change to 3.
+
+---
+
+### `net.ipv4.tcp_keepalive_time = 7200` 🔴 critical for Flutter clients
+**What it is:** How long a TCP connection must be *idle* before the kernel sends the first keepalive probe. 7200 = 2 hours.
+
+**The Flutter problem:** Mobile apps go to background, phones sleep, networks switch. The TCP connection dies silently on the client side but HAProxy and your Go backend have no idea — they hold the FD open for 2 hours waiting for activity that will never come. Those are zombie FDs directly eating into your 200K limit.
+
+**Change to:** 60 seconds. After 60 seconds of silence, start probing.
+
+---
+
+### `net.ipv4.tcp_keepalive_intvl = 75` ⚠️
+**What it is:** Once keepalive probing starts (after `keepalive_time`), how often to send each probe. 75 seconds between probes.
+
+**Combined with `keepalive_time = 7200`:** First probe at 2 hours, then every 75 seconds. With 9 probes (`keepalive_probes`) that's 2 hours + 11 minutes before a dead connection is cleaned up.
+
+**Change to:** 10 seconds between probes.
+
+---
+
+### `net.ipv4.tcp_keepalive_probes = 9` ⚠️
+**What it is:** How many unanswered keepalive probes before declaring the connection dead and closing it.
+
+**Current behavior:** After 2 hours idle, send 9 probes 75 seconds apart = 11 more minutes. Total: **2 hours 11 minutes** to detect a dead Flutter connection.
+
+**Proposed behavior:** After 60s idle, send 6 probes 10 seconds apart = 1 more minute. Total: **~70 seconds** to detect a dead connection and free the FD.
+
+**Change to:** 6
+
+---
+
